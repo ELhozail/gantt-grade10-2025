@@ -1,201 +1,261 @@
-import json, zipfile
+import pandas as pd
+import json
 from pathlib import Path
 
-# --- 1. טעינת נתונים ---
-src = Path("/mnt/data/data.json")
-tasks = []
-if src.exists():
-    try:
-        # קורא את הנתונים אם הקובץ קיים
-        tasks = json.loads(src.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        # טיפול במקרה שהקובץ קיים אך אינו תקין (כדי שהקוד לא ייכשל)
-        print("Warning: data.json found but could not be parsed. Using empty task list.")
-        tasks = []
+# Load the Excel uploaded by the user
+file_path = "/mnt/data/gantt-fixed.xlsx"
+df = pd.read_excel(file_path)
 
-# --- 2. יצירת סביבה ---
-base = Path("/mnt/data/gannt-hebrew-darkui-lightchart")
-base.mkdir(exist_ok=True)
-index_html = base/"index.html"
+# Ensure datetime types
+df["start"] = pd.to_datetime(df["start"])
+df["end"] = pd.to_datetime(df["end"])
 
-# --- 3. כתיבת קובץ index.html (הקוד המלא ששוחזר) ---
-# הקוד המלא של קובץ ה-HTML עם CSS, JS והנתונים המוטמעים
-index_html.write_text(f"""<!doctype html>
+# Normalize domains and collect unique
+df["domain"] = df["domain"].astype(str).str.strip()
+domains = sorted(df["domain"].dropna().unique().tolist())
+
+# Color palette for known domains (fallbacks if new ones appear)
+default_colors = {
+    "פדגוגי": "#ef4444",
+    "מוסדי": "#a855f7",
+    "חברתי": "#f59e0b",
+    "טכנולוגי": "#3b82f6",
+    "קהילתי": "#22c55e"
+}
+# Assign colors in deterministic order
+assigned_colors = {}
+palette_cycle = ["#ef4444", "#22c55e", "#3b82f6", "#a855f7", "#f59e0b", "#14b8a6", "#e11d48", "#0ea5e9"]
+i = 0
+for d in domains:
+    assigned_colors[d] = default_colors.get(d, palette_cycle[i % len(palette_cycle)])
+    i += 1
+
+# Build items array from the dataframe
+items = []
+for _, row in df.iterrows():
+    items.append({
+        "id": int(row["id"]),
+        "group": str(row["domain"]),
+        "content": str(row["name"]),
+        "start": row["start"].strftime("%Y-%m-%d"),
+        "end": row["end"].strftime("%Y-%m-%d"),
+        "title": f"סטטוס: {int(row['progress'])}%"
+    })
+
+# Create the HTML content
+html_template = f"""<!doctype html>
 <html lang="he" dir="rtl">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>לוח גאנט — אלנג'אח رهט (שכבה י׳)</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>לוח גאנט — עברית (ייבוא מ-Excel)</title>
 
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" rel="stylesheet">
+  <!-- vis-timeline CDN -->
+  <link rel="stylesheet" href="https://unpkg.com/vis-timeline@7.7.0/styles/vis-timeline-graph2d.min.css">
+  <script src="https://unpkg.com/vis-data@7.1.4/peer/umd/vis-data.min.js"></script>
+  <script src="https://unpkg.com/vis-timeline@7.7.0/peer/umd/vis-timeline-graph2d.min.js"></script>
 
-  <style>
-    /* Dark UI shell + light chart for black text readability */
-    :root{{
-      --bg:#0e1117; --panel:#151a23; --text:#e8eaed; --muted:#b7c0cc;
-      --grid:#f7f8fa; --grid-2:#eef1f6; --header-grid:#e9edf5;
-      --pedagogi:#ffd1dc; --kehila:#c8f1ff; --tech:#ffe0b2; --mosdi:#d7f5d7; --hevra:#e5e7eb;
-    }}
-    body{{background:var(--bg);color:var(--text);}}
-    header{{background:linear-gradient(120deg,#121826,#1a2130);padding:1rem 0;margin-bottom:1rem;border-bottom:1px solid #232a36;}}
-    .card{{background:var(--panel);border-radius:14px;border:1px solid #232a36;}}
+  <style>
+    :root{{
+      --bg:#f7f7f9;
+      --card:#ffffff;
+      --ink:#111;
+      --muted:#6b7280;
+      --accent:#0ea5e9;
+      --radius:16px;
+      --shadow:0 8px 24px rgba(0,0,0,.08);
+    }}
+    *{{box-sizing:border-box}}
+    body{{
+      margin:0;
+      background:var(--bg);
+      color:var(--ink);
+      font-family: "Heebo", "Rubik", "Assistant", "Arial", sans-serif;
+      line-height:1.45;
+      direction: rtl;
+      text-align:right;
+    }}
+    header{{ padding:22px 18px 6px; }}
+    h1{{ margin:0 0 8px; font-size: clamp(22px, 3vw, 34px); font-weight:800; }}
+    .toolbar{{
+      display:flex; flex-wrap:wrap; gap:8px; align-items:center; color:var(--muted); font-size:14px;
+    }}
+    .toolbar .btn{{
+      background:var(--card); border:1px solid #e5e7eb; padding:8px 12px; border-radius:12px; cursor:pointer; box-shadow: var(--shadow);
+    }}
+    .panel{{ margin:10px 18px 24px; background:var(--card); border:1px solid #e5e7eb; border-radius:var(--radius); box-shadow: var(--shadow);}}
+    #timeline{{ height:380px; border-radius: var(--radius);}}
+    .legend{{ display:flex; gap:10px; padding:10px 14px 14px; flex-wrap:wrap; border-top:1px dashed #e5e7eb; font-size:14px; color:#374151; }}
+    .dot{{ display:inline-block; inline-size:12px; block-size:12px; border-radius:99px; margin-inline-end:6px; vertical-align:middle; }}
 
-    .legend span{{margin-inline-end:1rem;color:var(--muted);font-size:.92rem}}
-    .legend i{{display:inline-block;width:14px;height:14px;border-radius:3px;margin-left:6px;}}
-    .lg-p{{background:var(--pedagogi);}} .lg-k{{background:var(--kehila);}}
-    .lg-t{{background:var(--tech);}} .lg-m{{background:var(--mosdi);}} .lg-h{{background:var(--hevra);}}
+    .table-wrap{{ margin:0 18px 60px; background:var(--card); border:1px solid #e5e7eb; border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; }}
+    .table-head{{ display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid #eef2f7; }}
+    .table-head h2{{ margin:0; font-size:18px; font-weight:800; }}
+    .filter-row{{ padding:10px 16px; border-bottom:1px dashed #eef2f7; display:flex; gap:16px; flex-wrap:wrap; align-items:center; color:#374151; font-size:14px; }}
+    table{{ width:100%; border-collapse:separate; border-spacing:0; font-size:14px; }}
+    thead th{{ position:sticky; top:0; background:#fafafa; z-index:1; text-align:right; padding:10px 12px; border-bottom:1px solid #e5e7eb; font-weight:700; color:#111827; white-space:nowrap; }}
+    tbody td{{ padding:10px 12px; border-bottom:1px solid #f1f5f9; vertical-align:top; }}
+    tbody tr:hover{{background:#fbfdff}}
+    .chip{{ display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; background:#f3f4f6; color:#111827; font-weight:600; font-size:12px; line-height:1; }}
+    .status{{ font-weight:700; padding:4px 8px; border-radius:8px; display:inline-block; }}
+    .s-done{{background:#e8faf1;color:#0f766e}} .s-plan{{background:#eef2ff;color:#4338ca}} .s-progress{{background:#fff7ed;color:#b45309}}
 
-    /* Light grid (so black text is readable) */
-    .gantt .grid-row rect{{fill:var(--grid)}}
-    .gantt .grid-row:nth-child(even) rect{{fill:var(--grid-2)}}
-    .gantt .grid-header rect{{fill:var(--header-grid)}}
-
-    /* Axis labels — black, bold */
-    .gantt .grid-header .upper-text,
-    .gantt .grid-header .lower-text{{fill:#000;font-weight:800}}
-    .gantt .lower-text{{font-size:13px}}
-    .gantt .upper-text{{font-size:14px}}
-
-    /* Bars: light pastels; labels: black bold with thin white outline */
-    .gantt .bar-פדגוגי{{fill:var(--pedagogi);}}
-    .gantt .bar-קהילתי{{fill:var(--kehila);}}
-    .gantt .bar-טכנולוגי{{fill:var(--tech);}}
-    .gantt .bar-מוסדי{{fill:var(--mosdi);}}
-    .gantt .bar-חברתי{{fill:var(--hevra);}}
-
-    .gantt .bar text{{
-      fill:#000 !important;
-      font-weight:800;
-      font-size:14px;
-      paint-order:stroke fill;
-      stroke:#ffffff;
-      stroke-width:1.5px;
-      stroke-linejoin:round;
-    }}
-
-    /* Ensure SVG text flows RTL when Hebrew is used */
-    #gantt text{{direction:rtl;unicode-bidi:bidi-override}}
-
-    .details-container{{
-      background:#ffffff;color:#000;padding:10px;border-radius:10px;text-align:right;
-      border:1px solid #dfe3ea
-    }}
-  </style>
+    .vis-timeline{{ border:none !important; border-radius:var(--radius);}}
+    .vis-item .vis-item-content{{ padding:6px 10px; font-weight:700;}}
+  </style>
 </head>
 <body>
-<header>
-  <div class="container d-flex justify-content-between align-items-center flex-wrap gap-3">
-    <div class="d-flex align-items-center gap-3">
-      <img src="logo.png" alt="לוגו" style="height:60px;">
-      <div>
-        <h1 class="h4 m-0">📘 בית ספר אלנג'אח — Rahat (שכבה י׳)</h1>
-        <div class="legend mt-2">
-          <span><i class="lg-p"></i> פדגוגי</span>
-          <span><i class="lg-k"></i> קהילתי</span>
-          <span><i class="lg-t"></i> טכנולוגי</span>
-          <span><i class="lg-m"></i> מוסדי</span>
-          <span><i class="lg-h"></i> חברתי</span>
-        </div>
-      </div>
-    </div>
-    <div id="diag" class="small text-muted"></div>
-  </div>
-</header>
+  <header>
+    <h1>לוח גאנט — בית הספר (ייבוא מ-Excel)</h1>
+    <div class="toolbar">
+      <button class="btn" id="zoomIn">התקרב</button>
+      <button class="btn" id="zoomOut">התרחק</button>
+      <button class="btn" id="fitAll">התאם לכל הטווח</button>
+      <span class="small" style="color:#6b7280">RTL · חודשים בעברית</span>
+    </div>
+  </header>
 
-<main class="container pb-5">
-  <div class="card">
-    <div class="card-body" style="overflow-x:auto;">
-      <div id="gantt" style="min-width:1100px;"></div>
-    </div>
-  </div>
-</main>
+  <section class="panel">
+    <div id="timeline"></div>
+    <div class="legend" id="legend"></div>
+  </section>
 
-<script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
-<script>
-  // === כל המשימות שלך (מוטמע כאן מתוך data.json) ===
-  const inlineData = {json.dumps(tasks, ensure_ascii=False, indent=2)};
+  <section class="table-wrap">
+    <div class="table-head">
+      <h2>טבלת משימות</h2>
+      <div class="small" style="color:#6b7280">המשימות נטענו מקובץ ה-Excel שלך</div>
+    </div>
 
-  function normalizeDate(dateStr){{
-    if(!dateStr) return "";
-    dateStr = String(dateStr).trim();
-    
-    // 1. ISO format YYYY-MM-DD
-    if(/^\\d{{4}}-\\d{{2}}-\\d{{2}}$/.test(dateStr)) return dateStr;
+    <div class="filter-row" id="filters"></div>
 
-    // 2. Try parsing with Date() constructor (handles many formats)
-    const d = new Date(dateStr);
-    if(!isNaN(d) && d.getFullYear() > 1900){{ // Add check for valid year
-      const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0");
-      return `${{y}}-${{m}}-${{da}}`;
-    }}
+    <div style="max-height:520px; overflow:auto;">
+      <table id="tasksTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>תחום</th>
+            <th>פעולה</th>
+            <th>התחלה</th>
+            <th>סיום</th>
+            <th>סטטוס</th>
+            <th>פעולות</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
 
-    // 3. DD/MM/YYYY or DD.MM.YYYY (Hebrew common format)
-    const m = dateStr.match(/^(\\d{{1,2}})[\\/\\.-](\\d{{1,2}})[\\/\\.-](\\d{{2,4}})$/);
-    if(m){{
-      const da=m[1].padStart(2,"0"), mo=m[2].padStart(2,"0"), y=m[3].length===2?("20"+m[3]):m[3];
-      return `${{y}}-${{mo}}-${{da}}`;
-    }}
-    
-    return dateStr; // Return as is if all parsing failed
-  }}
+  <script>
+    // ====== נתונים שיוצרו מה-Excel ======
+    const DOMAIN_COLORS = {json.dumps(assigned_colors, ensure_ascii=False)};
+    const itemsArray = {json.dumps(items, ensure_ascii=False)};
 
-  function normalizeTask(t){{
-    return {{
-      id:String(t.id),
-      domain:t.domain,
-      name:t.name,
-      start:normalizeDate(t.start),
-      end:normalizeDate(t.end),
-      progress:Number(t.progress||0)
-    }};
-  }}
+    // ====== vis DataSets ======
+    const groupsData = new vis.DataSet(Object.keys(DOMAIN_COLORS).map((name) => ({{ id: name, content: name }})));
+    const itemsData = new vis.DataSet(itemsArray);
 
-  // Hebrew months mapping
-  const MONTHS_EN2HE = {{"January":"ינואר","February":"פברואר","March":"מרץ","April":"אפריל","May":"מאי","June":"יוני",
-                         "July":"יולי","August":"אוגוסט","September":"ספטמבר","October":"אוקטובר","November":"נובמבר","December":"דצמבר"}};
-  function hebrewizeMonths(){{
-    document.querySelectorAll("#gantt .upper-text").forEach(el=>{{
-      const t=(el.textContent||"").trim();
-      if(MONTHS_EN2HE[t]) el.textContent = MONTHS_EN2HE[t];
-    }});
-  }}
+    // ====== Legend and filters ======
+    const legend = document.getElementById('legend');
+    const filters = document.getElementById('filters');
 
-  function render(){{
-    const el=document.getElementById('gantt');
-    if(!Array.isArray(inlineData) || !inlineData.length){{
-      el.innerHTML="<p class='text-center text-warning p-4'>אין נתונים</p>";
-      return;
-    }}
-    const gantt = new Gantt("#gantt", inlineData.map(normalizeTask), {{
-      view_mode:"Month",
-      custom_popup_html:task=>{{
-        return `<div class="details-container">
-          <div class="fw-bold">${{task.name}}</div>
-          <div>תחום: ${{task.domain||'-'}}</div>
-          <div>תאריכים: ${{task.start}} → ${{task.end}}</div>
-          <div>התקדמות: ${{task.progress??0}}%</div>
-        </div>`;
-      }}
-    }});
-    // חודשים בעברית
-    hebrewizeMonths();
-    window.addEventListener('resize', hebrewizeMonths);
-  }}
+    Object.entries(DOMAIN_COLORS).forEach(([name, color])=>{{
+      const span = document.createElement('span');
+      span.innerHTML = `<span class="dot" style="background:${{color}}"></span>${{name}}`;
+      legend.appendChild(span);
 
-  document.addEventListener("DOMContentLoaded", render);
-</script>
+      const label = document.createElement('label');
+      label.style.marginInlineEnd = '12px';
+      label.innerHTML = `<input type="checkbox" class="domain-filter" value="${{name}}" checked> ${{name}}`;
+      filters.appendChild(label);
+    }});
+
+    // ====== Timeline ======
+    const container = document.getElementById('timeline');
+
+    function itemTemplate(item, element){{
+      const color = DOMAIN_COLORS[item.group] || '#999';
+      element.style.background = color;
+      element.style.borderColor = color;
+      element.style.color = '#fff';
+      element.title = item.title || item.content;
+      return element;
+    }}
+
+    // Calculate default window from min/max of items
+    const dates = itemsArray.flatMap(it => [new Date(it.start), new Date(it.end)]);
+    const minDate = new Date(Math.min(...dates.map(d=>d.getTime())));
+    const maxDate = new Date(Math.max(...dates.map(d=>d.getTime())));
+
+    const options = {{
+      locale: 'he',
+      orientation: 'top',
+      rtl: true,
+      stack: true,
+      maxHeight: 380,
+      zoomMin: 1000 * 60 * 60 * 24 * 3,
+      zoomMax: 1000 * 60 * 60 * 24 * 366 * 3,
+      start: minDate,
+      end: maxDate,
+      editable: false,
+      margin: {{item:{{horizontal:6, vertical:8}}}},
+      template: itemTemplate,
+      groupOrder: (a,b)=> a.id.localeCompare(b.id, 'he')
+    }};
+
+    const timeline = new vis.Timeline(container, itemsData, groupsData, options);
+
+    // Zoom controls
+    const ZOOM_STEP = 0.6;
+    function setRange(start, end){{ timeline.setWindow(start, end, {{animation: {{duration:400}}}}); }}
+    function getRange(){{ const r = timeline.getWindow(); return {{start:r.start.valueOf(), end:r.end.valueOf()}}; }}
+    document.getElementById('zoomIn').onclick = ()=>{{ const r=getRange(); const i=r.end-r.start; const ni=i*ZOOM_STEP; const c=r.start+i/2; setRange(c-ni/2, c+ni/2); }};
+    document.getElementById('zoomOut').onclick = ()=>{{ const r=getRange(); const i=r.end-r.start; const ni=i/ZOOM_STEP; const c=r.start+i/2; setRange(c-ni/2, c+ni/2); }};
+    document.getElementById('fitAll').onclick = ()=> setRange(minDate, maxDate);
+
+    // ====== Table rendering ======
+    const tableBody = document.querySelector('#tasksTable tbody');
+    const statusClass = s => (s>=100? 's-done' : s>0 ? 's-progress': 's-plan');
+
+    function fmtDate(d){{ return new Date(d).toLocaleDateString('he-IL', {{year:'numeric', month:'2-digit', day:'2-digit'}}); }}
+
+    function renderTable(selected){{
+      tableBody.innerHTML = '';
+      const visible = itemsArray.filter(it => !selected || selected.has(it.group))
+                                .sort((a,b)=> new Date(a.start)-new Date(b.start));
+      visible.forEach((it, idx)=>{{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${{idx+1}}</td>
+          <td><span class="chip"><span class="dot" style="background:${{DOMAIN_COLORS[it.group]||'#999'}}"></span>${{it.group}}</span></td>
+          <td><strong>${{it.content}}</strong></td>
+          <td>${{fmtDate(it.start)}}</td>
+          <td>${{fmtDate(it.end)}}</td>
+          <td><span class="status ${{statusClass(parseInt((it.title||'0').replace(/\\D/g,'')))}}">${{(it.title||'0')}}</span></td>
+          <td><a href="#!" onclick="timeline.focus(${{JSON.stringify(it.id)}});return false;">הצג בגאנט</a></td>
+        `;
+        tableBody.appendChild(tr);
+      }});
+    }}
+    renderTable();
+
+    // Filters
+    function rebuild(){{
+      const selected = new Set([...document.querySelectorAll('.domain-filter')].filter(i=>i.checked).map(i=>i.value));
+      // Update timeline items
+      const filtered = itemsArray.filter(it => selected.has(it.group));
+      timeline.setItems(new vis.DataSet(filtered));
+      timeline.setGroups(groupsData);
+      renderTable(selected);
+    }}
+    document.querySelectorAll('.domain-filter').forEach(el => el.addEventListener('change', rebuild));
+  </script>
 </body>
 </html>
-""", encoding="utf-8")
+"""
 
-# --- 4. יצירת לוגו Placeholder ---
-# minimal placeholder logo
-(base/"logo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+# Save to file
+out_path = Path("/mnt/data/index.html")
+out_path.write_text(html_template, encoding="utf-8")
 
-# --- 5. כיווץ לקובץ ZIP ---
-zip_path = "/mnt/data/gantt-hebrew-darkui-lightchart.zip"
-with zipfile.ZipFile(zip_path, "w") as z:
-    for f in [index_html, base/"logo.png"]:
-        z.write(f, arcname=f.name)
-zip_path
+out_path.as_posix()
