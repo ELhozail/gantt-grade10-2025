@@ -4,11 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>לוח גאנט — אלנג'אח رهط (שכבה י׳)</title>
+
+  <!-- עיצוב כהה + RTL -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" rel="stylesheet">
+
   <style>
-    :root{--bg:#0d0f17;--panel:#1a1c29;--text:#f1f1f1;--muted:#aaa;--brand:#7c6cff;
-          --pedagogi:#ef4b6c;--kehila:#1fb6d5;--tech:#ff9800;--mosdi:#43a047;--hevra:#9e9e9e;}
+    :root{
+      --bg:#0d0f17; --panel:#1a1c29; --text:#f1f1f1; --muted:#aaa; --brand:#7c6cff;
+      --pedagogi:#ef4b6c; --kehila:#1fb6d5; --tech:#ff9800; --mosdi:#43a047; --hevra:#9e9e9e;
+    }
     body{background:var(--bg);color:var(--text);}
     header{background:linear-gradient(120deg,#151726,#1e2133,#2b2e44);padding:1rem 0;margin-bottom:1rem;}
     .card{background:var(--panel);border-radius:16px;border:1px solid rgba(255,255,255,.1);}
@@ -41,6 +46,7 @@
     <div id="diag" class="text-muted small"></div>
   </div>
 </header>
+
 <main class="container pb-5">
   <div class="card">
     <div class="card-body" style="overflow-x:auto;">
@@ -48,37 +54,113 @@
     </div>
   </div>
 </main>
+
 <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
 <script>
-let TASKS=[];
-function normalizeTask(t){return {id:t.id,domain:t.domain,name:t.name,start:t.start,end:t.end,progress:Number(t.progress||0)};}
-function hebrewizeMonths(){
-  const engToHe={"January":"ינואר","February":"פברואר","March":"מרץ","April":"אפריל","May":"מאי","June":"יוני",
-                 "July":"יולי","August":"אוגוסט","September":"ספטמבר","October":"אוקטובר","November":"נובמבר","December":"דצמבר"};
-  document.querySelectorAll("#gantt .upper-text").forEach(el=>{const txt=(el.textContent||"").trim();if(engToHe[txt])el.textContent=engToHe[txt];});
-}
-function render(){
-  const el=document.getElementById('gantt');
-  if(!TASKS.length){el.innerHTML="<p class='text-center text-warning p-4'>אין נתונים</p>";return;}
-  el.innerHTML="";
-  new Gantt("#gantt",TASKS.map(t=>({
-    id:t.id,name:t.name,start:t.start,end:t.end,progress:t.progress,custom_class:'bar-'+(t.domain||'')
-  })),{view_mode:"Month",
-    custom_popup_html:task=>{const t=TASKS.find(x=>x.id===task.id)||task;
-      return `<div class="details-container"><div class="fw-bold">${task.name}</div>
-        <div>תחום: ${t.domain||'-'}</div><div>תאריכים: ${task.start} → ${task.end}</div>
-        <div>התקדמות: ${task.progress??0}%</div></div>`}
-  });
-  hebrewizeMonths();
-}
-async function loadData(){
-  try{
-    const r=await fetch("data.json?v="+Date.now(),{cache:"no-store"});
-    if(!r.ok) throw new Error("HTTP "+r.status);
-    const data=await r.json(); TASKS=data.map(normalizeTask); render(); document.getElementById('diag').textContent="✓ הנתונים נטענו";
-  }catch(e){document.getElementById('gantt').innerHTML="<p class='text-danger'>בעיה בטעינת data.json</p>";console.error(e);}
-}
-document.addEventListener("DOMContentLoaded",loadData);
+  const REPO_USER = "elhozail";
+  const REPO_NAME = "gantt-grade10-najah";
+
+  let TASKS=[];
+
+  function normalizeTask(t){
+    return { id:String(t.id), domain:t.domain, name:t.name,
+             start:t.start, end:t.end, progress:Number(t.progress||0) };
+  }
+
+  function hebrewizeMonths(){
+    const engToHe={"January":"ינואר","February":"פברואר","March":"מרץ","April":"אפריל","May":"מאי","June":"יוני",
+                   "July":"יולי","August":"אוגוסט","September":"ספטמבר","October":"אוקטובר","November":"נובמבר","December":"דצמבר"};
+    document.querySelectorAll("#gantt .upper-text").forEach(el=>{
+      const txt=(el.textContent||"").trim(); if(engToHe[txt]) el.textContent=engToHe[txt];
+    });
+  }
+
+  function render(){
+    const el=document.getElementById('gantt');
+    if(!TASKS.length){ el.innerHTML="<p class='text-center text-warning p-4'>אין נתונים</p>"; return; }
+    el.innerHTML="";
+    new Gantt("#gantt", TASKS.map(t=>({
+      id:t.id, name:t.name, start:t.start, end:t.end, progress:t.progress,
+      custom_class:'bar-'+(t.domain||'')
+    })),{
+      view_mode:"Month",
+      custom_popup_html:task=>{
+        const t=TASKS.find(x=>x.id===task.id)||task;
+        return `<div class="details-container">
+          <div class="fw-bold">${task.name}</div>
+          <div>תחום: ${t.domain||'-'}</div>
+          <div>תאריכים: ${task.start} → ${task.end}</div>
+          <div>התקדמות: ${task.progress??0}%</div>
+        </div>`;
+      }
+    });
+    hebrewizeMonths();
+  }
+
+  async function tryFetch(url){
+    const r = await fetch(url, {cache:"no-store"});
+    if(!r.ok){
+      const txt = await r.text().catch(()=>"(no body)");
+      throw new Error(`[${r.status}] ${url} :: ${txt.slice(0,120)}`);
+    }
+    return r.json();
+  }
+
+  async function loadData(){
+    const diag = document.getElementById('diag');
+    const urls = [
+      "./data.json?v=" + Date.now(),  // משורש ה־Pages
+      `https://${REPO_USER}.github.io/${REPO_NAME}/data.json?v=` + Date.now(), // נתיב מוחלט
+      `https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/data.json?v=` + Date.now(), // RAW
+      `https://github.com/${REPO_USER}/${REPO_NAME}/raw/main/data.json?raw=1&v=` + Date.now() // גיבוי נוסף
+    ];
+    let lastErr = null;
+    for(const u of urls){
+      try{
+        diag.textContent = "טוען: " + u;
+        const data = await tryFetch(u);
+        TASKS = data.map(normalizeTask);
+        diag.textContent = "נטען בהצלחה מ: " + u;
+        render();
+        return;
+      }catch(err){
+        console.error(err); lastErr = err.message;
+      }
+    }
+    // ---- גיבוי סופי: נתונים מוטמעים בתוך העמוד ----
+    try{
+      const inline = document.getElementById("inline-data");
+      if(inline){
+        const data = JSON.parse(inline.textContent);
+        if(Array.isArray(data) && data.length){
+          TASKS = data.map(normalizeTask);
+          diag.textContent = "נטען מהנתונים המוטמעים בעמוד (inline).";
+          render();
+          return;
+        }
+      }
+    }catch(e){ console.error("Inline parse error", e); }
+
+    document.getElementById('gantt').innerHTML =
+      "<div class='p-3 text-danger'>בעיה בטעינת data.json<br><small>"+(lastErr||"")+"</small></div>";
+    diag.textContent = "שגיאה: בדוק שהקובץ data.json נמצא בשורש הריפו וה־Pages פעיל על main/root.";
+  }
+
+  document.addEventListener("DOMContentLoaded", loadData);
 </script>
+
+<!-- ====== גיבוי מוטמע: הדבק כאן את תוכן data.json שלך אם צריך ======
+הדבק בין הסוגריים המרובעים [] את המשימות שלך בפורמט:
+{ "id":"1","domain":"פדגוגי","name":"דוגמה","start":"2025-10-01","end":"2025-10-05","progress":50 }
+אפשר כמה אובייקטים מופרדים בפסיקים.
+-->
+<script id="inline-data" type="application/json">[
+  {
+    "id":"1","domain":"פדגוגי","name":"סדנת פתיחת שנה","start":"2025-09-05","end":"2025-09-10","progress":100
+  },
+  {
+    "id":"2","domain":"חברתי","name":"פעילות גיבוש שכבת י׳","start":"2025-10-01","end":"2025-10-05","progress":50
+  }
+]</script>
 </body>
 </html>
