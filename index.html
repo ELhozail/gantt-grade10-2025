@@ -1,181 +1,201 @@
 import json, zipfile
 from pathlib import Path
 
-# Load tasks from user's data.json if exists
+# --- 1. טעינת נתונים ---
 src = Path("/mnt/data/data.json")
-tasks = json.loads(src.read_text(encoding="utf-8")) if src.exists() else []
+tasks = []
+if src.exists():
+    try:
+        # קורא את הנתונים אם הקובץ קיים
+        tasks = json.loads(src.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        # טיפול במקרה שהקובץ קיים אך אינו תקין (כדי שהקוד לא ייכשל)
+        print("Warning: data.json found but could not be parsed. Using empty task list.")
+        tasks = []
 
+# --- 2. יצירת סביבה ---
 base = Path("/mnt/data/gannt-hebrew-darkui-lightchart")
 base.mkdir(exist_ok=True)
-
 index_html = base/"index.html"
+
+# --- 3. כתיבת קובץ index.html ---
+# הקוד המלא של קובץ ה-HTML עם CSS, JS והנתונים המוטמעים
 index_html.write_text(f"""<!doctype html>
 <html lang="he" dir="rtl">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>לוח גאנט — אלנג'אח رهט (שכבה י׳)</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>לוח גאנט — אלנג'אח رهط (שכבה י׳)</title>
 
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" rel="stylesheet">
 
-  <style>
-    /* Dark UI shell + light chart for black text readability */
-    :root{{
-      --bg:#0e1117; --panel:#151a23; --text:#e8eaed; --muted:#b7c0cc;
-      --grid:#f7f8fa; --grid-2:#eef1f6; --header-grid:#e9edf5;
-      --pedagogi:#ffd1dc; --kehila:#c8f1ff; --tech:#ffe0b2; --mosdi:#d7f5d7; --hevra:#e5e7eb;
-    }}
-    body{{background:var(--bg);color:var(--text);}}
-    header{{background:linear-gradient(120deg,#121826,#1a2130);padding:1rem 0;margin-bottom:1rem;border-bottom:1px solid #232a36;}}
-    .card{{background:var(--panel);border-radius:14px;border:1px solid #232a36;}}
+  <style>
+    /* Dark UI shell + light chart for black text readability */
+    :root{{
+      --bg:#0e1117; --panel:#151a23; --text:#e8eaed; --muted:#b7c0cc;
+      --grid:#f7f8fa; --grid-2:#eef1f6; --header-grid:#e9edf5;
+      --pedagogi:#ffd1dc; --kehila:#c8f1ff; --tech:#ffe0b2; --mosdi:#d7f5d7; --hevra:#e5e7eb;
+    }}
+    body{{background:var(--bg);color:var(--text);}}
+    header{{background:linear-gradient(120deg,#121826,#1a2130);padding:1rem 0;margin-bottom:1rem;border-bottom:1px solid #232a36;}}
+    .card{{background:var(--panel);border-radius:14px;border:1px solid #232a36;}}
 
-    .legend span{{margin-inline-end:1rem;color:var(--muted);font-size:.92rem}}
-    .legend i{{display:inline-block;width:14px;height:14px;border-radius:3px;margin-left:6px;}}
-    .lg-p{{background:var(--pedagogi);}} .lg-k{{background:var(--kehila);}}
-    .lg-t{{background:var(--tech);}} .lg-m{{background:var(--mosdi);}} .lg-h{{background:var(--hevra);}}
+    .legend span{{margin-inline-end:1rem;color:var(--muted);font-size:.92rem}}
+    .legend i{{display:inline-block;width:14px;height:14px;border-radius:3px;margin-left:6px;}}
+    .lg-p{{background:var(--pedagogi);}} .lg-k{{background:var(--kehila);}}
+    .lg-t{{background:var(--tech);}} .lg-m{{background:var(--mosdi);}} .lg-h{{background:var(--hevra);}}
 
-    /* Light grid (so black text is readable) */
-    .gantt .grid-row rect{{fill:var(--grid)}}
-    .gantt .grid-row:nth-child(even) rect{{fill:var(--grid-2)}}
-    .gantt .grid-header rect{{fill:var(--header-grid)}}
+    /* Light grid (so black text is readable) */
+    .gantt .grid-row rect{{fill:var(--grid)}}
+    .gantt .grid-row:nth-child(even) rect{{fill:var(--grid-2)}}
+    .gantt .grid-header rect{{fill:var(--header-grid)}}
 
-    /* Axis labels — black, bold */
-    .gantt .grid-header .upper-text,
-    .gantt .grid-header .lower-text{{fill:#000;font-weight:800}}
-    .gantt .lower-text{{font-size:13px}}
-    .gantt .upper-text{{font-size:14px}}
+    /* Axis labels — black, bold */
+    .gantt .grid-header .upper-text,
+    .gantt .grid-header .lower-text{{fill:#000;font-weight:800}}
+    .gantt .lower-text{{font-size:13px}}
+    .gantt .upper-text{{font-size:14px}}
 
-    /* Bars: light pastels; labels: black bold with thin white outline */
-    .gantt .bar-פדגוגי{{fill:var(--pedagogi);}}
-    .gantt .bar-קהילתי{{fill:var(--kehila);}}
-    .gantt .bar-טכנולוגי{{fill:var(--tech);}}
-    .gantt .bar-מוסדי{{fill:var(--mosdi);}}
-    .gantt .bar-חברתי{{fill:var(--hevra);}}
+    /* Bars: light pastels; labels: black bold with thin white outline */
+    .gantt .bar-פדגוגי{{fill:var(--pedagogi);}}
+    .gantt .bar-קהילתי{{fill:var(--kehila);}}
+    .gantt .bar-טכנולוגי{{fill:var(--tech);}}
+    .gantt .bar-מוסדי{{fill:var(--mosdi);}}
+    .gantt .bar-חברתי{{fill:var(--hevra);}}
 
-    .gantt .bar text{{
-      fill:#000 !important;
-      font-weight:800;
-      font-size:14px;
-      paint-order:stroke fill;
-      stroke:#ffffff;
-      stroke-width:1.5px;
-      stroke-linejoin:round;
-    }}
+    .gantt .bar text{{
+      fill:#000 !important;
+      font-weight:800;
+      font-size:14px;
+      paint-order:stroke fill;
+      stroke:#ffffff;
+      stroke-width:1.5px;
+      stroke-linejoin:round;
+    }}
 
-    /* Ensure SVG text flows RTL when Hebrew is used */
-    #gantt text{{direction:rtl;unicode-bidi:bidi-override}}
+    /* Ensure SVG text flows RTL when Hebrew is used */
+    #gantt text{{direction:rtl;unicode-bidi:bidi-override}}
 
-    .details-container{{
-      background:#ffffff;color:#000;padding:10px;border-radius:10px;text-align:right;
-      border:1px solid #dfe3ea
-    }}
-  </style>
+    .details-container{{
+      background:#ffffff;color:#000;padding:10px;border-radius:10px;text-align:right;
+      border:1px solid #dfe3ea
+    }}
+  </style>
 </head>
 <body>
 <header>
-  <div class="container d-flex justify-content-between align-items-center flex-wrap gap-3">
-    <div class="d-flex align-items-center gap-3">
-      <img src="logo.png" alt="לוגו" style="height:60px;">
-      <div>
-        <h1 class="h4 m-0">📘 בית ספר אלנג'אח — Rahat (שכבה י׳)</h1>
-        <div class="legend mt-2">
-          <span><i class="lg-p"></i> פדגוגי</span>
-          <span><i class="lg-k"></i> קהילתי</span>
-          <span><i class="lg-t"></i> טכנולוגי</span>
-          <span><i class="lg-m"></i> מוסדי</span>
-          <span><i class="lg-h"></i> חברתי</span>
-        </div>
-      </div>
-    </div>
-    <div id="diag" class="small text-muted"></div>
-  </div>
+  <div class="container d-flex justify-content-between align-items-center flex-wrap gap-3">
+    <div class="d-flex align-items-center gap-3">
+      <img src="logo.png" alt="לוגו" style="height:60px;">
+      <div>
+        <h1 class="h4 m-0">📘 בית ספר אלנג'אח — Rahat (שכבה י׳)</h1>
+        <div class="legend mt-2">
+          <span><i class="lg-p"></i> פדגוגי</span>
+          <span><i class="lg-k"></i> קהילתי</span>
+          <span><i class="lg-t"></i> טכנולוגי</span>
+          <span><i class="lg-m"></i> מוסדי</span>
+          <span><i class="lg-h"></i> חברתי</span>
+        </div>
+      </div>
+    </div>
+    <div id="diag" class="small text-muted"></div>
+  </div>
 </header>
 
 <main class="container pb-5">
-  <div class="card">
-    <div class="card-body" style="overflow-x:auto;">
-      <div id="gantt" style="min-width:1100px;"></div>
-    </div>
-  </div>
+  <div class="card">
+    <div class="card-body" style="overflow-x:auto;">
+      <div id="gantt" style="min-width:1100px;"></div>
+    </div>
+  </div>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
 <script>
-  // === כל המשימות שלך (מוטמע כאן מתוך data.json) ===
-  const inlineData = {json.dumps(tasks, ensure_ascii=False, indent=2)};
+  // === כל המשימות שלך (מוטמע כאן מתוך data.json) ===
+  const inlineData = {json.dumps(tasks, ensure_ascii=False, indent=2)};
 
-  function normalizeDate(dateStr){{
-    if(!dateStr) return "";
-    if(/^\\d{{4}}-\\d{{2}}-\\d{{2}}$/.test(dateStr)) return dateStr;
-    const d = new Date(dateStr);
-    if(!isNaN(d)){{
-      const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0");
-      return `${{y}}-${{m}}-${{da}}`;
-    }}
-    const m = String(dateStr).match(/^(\\d{{1,2}})[\\/\\.-](\\d{{1,2}})[\\/\\.-](\\d{{2,4}})$/);
-    if(m){{
-      const da=m[1].padStart(2,"0"), mo=m[2].padStart(2,"0"), y=m[3].length===2?("20"+m[3]):m[3];
-      return `${{y}}-${{mo}}-${{da}}`;
-    }}
-    return String(dateStr);
-  }}
+  function normalizeDate(dateStr){{
+    if(!dateStr) return "";
+    dateStr = String(dateStr).trim();
+    
+    // 1. ISO format YYYY-MM-DD
+    if(/^\\d{{4}}-\\d{{2}}-\\d{{2}}$/.test(dateStr)) return dateStr;
 
-  function normalizeTask(t){{
-    return {{
-      id:String(t.id),
-      domain:t.domain,
-      name:t.name,
-      start:normalizeDate(t.start),
-      end:normalizeDate(t.end),
-      progress:Number(t.progress||0)
-    }};
-  }}
+    // 2. Try parsing with Date() constructor (handles many formats)
+    const d = new Date(dateStr);
+    if(!isNaN(d) && d.getFullYear() > 1900){ // Add check for valid year
+      const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0");
+      return `${{y}}-${{m}}-${{da}}`;
+    }
 
-  // Hebrew months mapping
-  const MONTHS_EN2HE = {{"January":"ינואר","February":"פברואר","March":"מרץ","April":"אפריל","May":"מאי","June":"יוני",
-                         "July":"יולי","August":"אוגוסט","September":"ספטמבר","October":"אוקטובר","November":"נובמבר","December":"דצמבר"}};
-  function hebrewizeMonths(){{
-    document.querySelectorAll("#gantt .upper-text").forEach(el=>{{
-      const t=(el.textContent||"").trim();
-      if(MONTHS_EN2HE[t]) el.textContent = MONTHS_EN2HE[t];
-    }});
-  }}
+    // 3. DD/MM/YYYY or DD.MM.YYYY (Hebrew common format)
+    const m = dateStr.match(/^(\\d{{1,2}})[\\/\\.-](\\d{{1,2}})[\\/\\.-](\\d{{2,4}})$/);
+    if(m){{
+      const da=m[1].padStart(2,"0"), mo=m[2].padStart(2,"0"), y=m[3].length===2?("20"+m[3]):m[3];
+      return `${{y}}-${{mo}}-${{da}}`;
+    }}
+    
+    return dateStr; // Return as is if all parsing failed
+  }}
 
-  function render(){{
-    const el=document.getElementById('gantt');
-    if(!Array.isArray(inlineData) || !inlineData.length){{
-      el.innerHTML="<p class='text-center text-warning p-4'>אין נתונים</p>";
-      return;
-    }}
-    const gantt = new Gantt("#gantt", inlineData.map(normalizeTask), {{
-      view_mode:"Month",
-      custom_popup_html:task=>{{
-        return `<div class="details-container">
-          <div class="fw-bold">${{task.name}}</div>
-          <div>תחום: ${{task.domain||'-'}}</div>
-          <div>תאריכים: ${{task.start}} → ${{task.end}}</div>
-          <div>התקדמות: ${{task.progress??0}}%</div>
-        </div>`;
-      }}
-    }});
-    // חודשים בעברית
-    hebrewizeMonths();
-    window.addEventListener('resize', hebrewizeMonths);
-  }}
+  function normalizeTask(t){{
+    return {{
+      id:String(t.id),
+      domain:t.domain,
+      name:t.name,
+      start:normalizeDate(t.start),
+      end:normalizeDate(t.end),
+      progress:Number(t.progress||0)
+    }};
+  }}
 
-  document.addEventListener("DOMContentLoaded", render);
+  // Hebrew months mapping
+  const MONTHS_EN2HE = {{"January":"ינואר","February":"פברואר","March":"מרץ","April":"אפריל","May":"מאי","June":"יוני",
+                         "July":"יולי","August":"אוגוסט","September":"ספטמבר","October":"אוקטובר","November":"נובמבר","December":"דצמבר"}};
+  function hebrewizeMonths(){{
+    document.querySelectorAll("#gantt .upper-text").forEach(el=>{{
+      const t=(el.textContent||"").trim();
+      if(MONTHS_EN2HE[t]) el.textContent = MONTHS_EN2HE[t];
+    }});
+  }}
+
+  function render(){{
+    const el=document.getElementById('gantt');
+    if(!Array.isArray(inlineData) || !inlineData.length){{
+      el.innerHTML="<p class='text-center text-warning p-4'>אין נתונים</p>";
+      return;
+    }}
+    const gantt = new Gantt("#gantt", inlineData.map(normalizeTask), {{
+      view_mode:"Month",
+      custom_popup_html:task=>{{
+        return `<div class="details-container">
+          <div class="fw-bold">${{task.name}}</div>
+          <div>תחום: ${{task.domain||'-'}}</div>
+          <div>תאריכים: ${{task.start}} → ${{task.end}}</div>
+          <div>התקדמות: ${{task.progress??0}}%</div>
+        </div>`;
+      }}
+    }});
+    // חודשים בעברית
+    hebrewizeMonths();
+    window.addEventListener('resize', hebrewizeMonths);
+  }}
+
+  document.addEventListener("DOMContentLoaded", render);
 </script>
 </body>
 </html>
 """, encoding="utf-8")
 
+# --- 4. יצירת לוגו Placeholder ---
 # minimal placeholder logo
 (base/"logo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
 
-# Make zip
+# --- 5. כיווץ לקובץ ZIP ---
 zip_path = "/mnt/data/gantt-hebrew-darkui-lightchart.zip"
 with zipfile.ZipFile(zip_path, "w") as z:
-    for f in [index_html, base/"logo.png"]:
-        z.write(f, arcname=f.name)
+    for f in [index_html, base/"logo.png"]:
+        z.write(f, arcname=f.name)
 zip_path
