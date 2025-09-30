@@ -1,261 +1,1380 @@
-import pandas as pd
-import json
-from pathlib import Path
-
-# Load the Excel uploaded by the user
-file_path = "/mnt/data/gantt-fixed.xlsx"
-df = pd.read_excel(file_path)
-
-# Ensure datetime types
-df["start"] = pd.to_datetime(df["start"])
-df["end"] = pd.to_datetime(df["end"])
-
-# Normalize domains and collect unique
-df["domain"] = df["domain"].astype(str).str.strip()
-domains = sorted(df["domain"].dropna().unique().tolist())
-
-# Color palette for known domains (fallbacks if new ones appear)
-default_colors = {
-    "פדגוגי": "#ef4444",
-    "מוסדי": "#a855f7",
-    "חברתי": "#f59e0b",
-    "טכנולוגי": "#3b82f6",
-    "קהילתי": "#22c55e"
-}
-# Assign colors in deterministic order
-assigned_colors = {}
-palette_cycle = ["#ef4444", "#22c55e", "#3b82f6", "#a855f7", "#f59e0b", "#14b8a6", "#e11d48", "#0ea5e9"]
-i = 0
-for d in domains:
-    assigned_colors[d] = default_colors.get(d, palette_cycle[i % len(palette_cycle)])
-    i += 1
-
-# Build items array from the dataframe
-items = []
-for _, row in df.iterrows():
-    items.append({
-        "id": int(row["id"]),
-        "group": str(row["domain"]),
-        "content": str(row["name"]),
-        "start": row["start"].strftime("%Y-%m-%d"),
-        "end": row["end"].strftime("%Y-%m-%d"),
-        "title": f"סטטוס: {int(row['progress'])}%"
-    })
-
-# Create the HTML content
-html_template = f"""<!doctype html>
+html
+<!doctype html>
 <html lang="he" dir="rtl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>לוח גאנט — עברית (ייבוא מ-Excel)</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>לוח גאנט — אלנג'אח رهט (שכבה י׳)</title>
 
-  <!-- vis-timeline CDN -->
-  <link rel="stylesheet" href="https://unpkg.com/vis-timeline@7.7.0/styles/vis-timeline-graph2d.min.css">
-  <script src="https://unpkg.com/vis-data@7.1.4/peer/umd/vis-data.min.js"></script>
-  <script src="https://unpkg.com/vis-timeline@7.7.0/peer/umd/vis-timeline-graph2d.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" rel="stylesheet">
 
   <style>
-    :root{{
-      --bg:#f7f7f9;
-      --card:#ffffff;
-      --ink:#111;
-      --muted:#6b7280;
-      --accent:#0ea5e9;
-      --radius:16px;
-      --shadow:0 8px 24px rgba(0,0,0,.08);
-    }}
-    *{{box-sizing:border-box}}
-    body{{
-      margin:0;
-      background:var(--bg);
-      color:var(--ink);
-      font-family: "Heebo", "Rubik", "Assistant", "Arial", sans-serif;
-      line-height:1.45;
-      direction: rtl;
-      text-align:right;
-    }}
-    header{{ padding:22px 18px 6px; }}
-    h1{{ margin:0 0 8px; font-size: clamp(22px, 3vw, 34px); font-weight:800; }}
-    .toolbar{{
-      display:flex; flex-wrap:wrap; gap:8px; align-items:center; color:var(--muted); font-size:14px;
-    }}
-    .toolbar .btn{{
-      background:var(--card); border:1px solid #e5e7eb; padding:8px 12px; border-radius:12px; cursor:pointer; box-shadow: var(--shadow);
-    }}
-    .panel{{ margin:10px 18px 24px; background:var(--card); border:1px solid #e5e7eb; border-radius:var(--radius); box-shadow: var(--shadow);}}
-    #timeline{{ height:380px; border-radius: var(--radius);}}
-    .legend{{ display:flex; gap:10px; padding:10px 14px 14px; flex-wrap:wrap; border-top:1px dashed #e5e7eb; font-size:14px; color:#374151; }}
-    .dot{{ display:inline-block; inline-size:12px; block-size:12px; border-radius:99px; margin-inline-end:6px; vertical-align:middle; }}
+    body { background:#ffffff; color:#000; direction:rtl; }
+    header { background:#f3f4f6; padding:1rem; margin-bottom:1rem; border-bottom:2px solid #e5e7eb; }
+    .card { background:#fff; border:1px solid #ddd; border-radius:12px; }
 
-    .table-wrap{{ margin:0 18px 60px; background:var(--card); border:1px solid #e5e7eb; border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; }}
-    .table-head{{ display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid #eef2f7; }}
-    .table-head h2{{ margin:0; font-size:18px; font-weight:800; }}
-    .filter-row{{ padding:10px 16px; border-bottom:1px dashed #eef2f7; display:flex; gap:16px; flex-wrap:wrap; align-items:center; color:#374151; font-size:14px; }}
-    table{{ width:100%; border-collapse:separate; border-spacing:0; font-size:14px; }}
-    thead th{{ position:sticky; top:0; background:#fafafa; z-index:1; text-align:right; padding:10px 12px; border-bottom:1px solid #e5e7eb; font-weight:700; color:#111827; white-space:nowrap; }}
-    tbody td{{ padding:10px 12px; border-bottom:1px solid #f1f5f9; vertical-align:top; }}
-    tbody tr:hover{{background:#fbfdff}}
-    .chip{{ display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; background:#f3f4f6; color:#111827; font-weight:600; font-size:12px; line-height:1; }}
-    .status{{ font-weight:700; padding:4px 8px; border-radius:8px; display:inline-block; }}
-    .s-done{{background:#e8faf1;color:#0f766e}} .s-plan{{background:#eef2ff;color:#4338ca}} .s-progress{{background:#fff7ed;color:#b45309}}
+    .legend span { margin-inline-end:1rem; color:#111; font-size:.9rem }
+    .legend i { display:inline-block; width:14px; height:14px; border-radius:3px; margin-left:6px; }
+    .lg-p{background:#ef4b6c;} .lg-k{background:#06b6d4;}
+    .lg-t{background:#ff9800;} .lg-m{background:#43a047;} .lg-h{background:#9e9e9e;}
 
-    .vis-timeline{{ border:none !important; border-radius:var(--radius);}}
-    .vis-item .vis-item-content{{ padding:6px 10px; font-weight:700;}}
+    .gantt .bar-פדגוגי{fill:#ef4b6c;}
+    .gantt .bar-קהילתי{fill:#06b6d4;}
+    .gantt .bar-טכנולוגי{fill:#ff9800;}
+    .gantt .bar-מוסדי{fill:#43a047;}
+    .gantt .bar-חברתי{fill:#9e9e9e;}
+
+    .gantt .grid-header .upper-text,
+    .gantt .grid-header .lower-text {fill:#000;font-weight:700}
+    .gantt .bar text {
+      fill:#000 !important;
+      font-weight:800;
+      font-size:14px;
+    }
+
+    .details-container {
+      background:#f9fafb; color:#000; padding:10px; border-radius:10px; text-align:right;
+      border:1px solid #ddd;
+    }
   </style>
 </head>
 <body>
-  <header>
-    <h1>לוח גאנט — בית הספר (ייבוא מ-Excel)</h1>
-    <div class="toolbar">
-      <button class="btn" id="zoomIn">התקרב</button>
-      <button class="btn" id="zoomOut">התרחק</button>
-      <button class="btn" id="fitAll">התאם לכל הטווח</button>
-      <span class="small" style="color:#6b7280">RTL · חודשים בעברית</span>
+<header>
+  <div class="container d-flex align-items-center gap-3">
+    <img src="logo.png" alt="לוגו" style="height:60px;">
+    <h1 class="h4 m-0">📘 בית ספר אלנג'אח — Rahat (שכבה י׳)</h1>
+  </div>
+  <div class="container legend mt-2">
+    <span><i class="lg-p"></i> פדגוגי</span>
+    <span><i class="lg-k"></i> קהילתי</span>
+    <span><i class="lg-t"></i> טכנולוגי</span>
+    <span><i class="lg-m"></i> מוסדי</span>
+    <span><i class="lg-h"></i> חברתי</span>
+  </div>
+</header>
+
+<main class="container pb-5">
+  <div class="card">
+    <div class="card-body" style="overflow-x:auto;">
+      <div id="gantt" style="min-width:1100px;"></div>
     </div>
-  </header>
+  </div>
+</main>
 
-  <section class="panel">
-    <div id="timeline"></div>
-    <div class="legend" id="legend"></div>
-  </section>
+<script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+<script>
+  // כאן מוגדרות המשימות
+  const inlineData = [
+    {
+      id: "1",
+      name: "פתיחת שנת הלימודים",
+      domain: "פדגוגי",
+      start: "2025-09-01",
+      end: "2025-09-10",
+      progress: 100
+    },
+    {
+      id: "2",
+      name: "שבוע קהילה",
+      domain: "קהילתי",
+      start: "2025-10-05",
+      end: "2025-10-10",
+      progress: 40
+    },
+    {
+      id: "3",
+      name: "שבוע טכנולוגי",
+      domain: "טכנולוגי",
+      start: "2025-11-01",
+      end: "2025-11-07",
+      progress: 0
+    },
+    {
+      id: "4",
+      name: "שיפוץ מועדון תלמידים",
+      domain: "מוסדי",
+      start: "2025-09-15",
+      end: "2025-09-30",
+      progress: 30
+    },
+    {
+      id: "5",
+      name: "הפסקה פעילה",
+      domain: "חברתי",
+      start: "2025-12-10",
+      end: "2025-12-10",
+      progress: 0
+    }
+    // אפשר להוסיף כאן משימות נוספות
+  ];
 
-  <section class="table-wrap">
-    <div class="table-head">
-      <h2>טבלת משימות</h2>
-      <div class="small" style="color:#6b7280">המשימות נטענו מקובץ ה-Excel שלך</div>
-    </div>
+  function normalizeDate(dateStr){
+    if(!dateStr) return "";
+    if(/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+    const d = new Date(dateStr);
+    if(!isNaN(d)){
+      const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0");
+      return `${y}-${m}-${da}`;
+    }
+    return dateStr;
+  }
 
-    <div class="filter-row" id="filters"></div>
+  function normalizeTask(t){
+    return {
+      id:String(t.id),
+      domain:t.domain,
+      name:t.name,
+      start:normalizeDate(t.start),
+      end:normalizeDate(t.end),
+      progress:Number(t.progress||0)
+    };
+  }
 
-    <div style="max-height:520px; overflow:auto;">
-      <table id="tasksTable">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>תחום</th>
-            <th>פעולה</th>
-            <th>התחלה</th>
-            <th>סיום</th>
-            <th>סטטוס</th>
-            <th>פעולות</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </section>
+  // החודשים בעברית
+  const MONTHS_EN2HE = {
+    "January":"ינואר","February":"פברואר","March":"מרץ","April":"אפריל","May":"מאי","June":"יוני",
+    "July":"יולי","August":"אוגוסט","September":"ספטמבר","October":"אוקטובר","November":"נובמבר","December":"דצמבר"
+  };
+  function hebrewizeMonths(){
+    document.querySelectorAll("#gantt .upper-text").forEach(el=>{
+      const t=(el.textContent||"").trim();
+      if(MONTHS_EN2HE[t]) el.textContent = MONTHS_EN2HE[t];
+    });
+  }
 
-  <script>
-    // ====== נתונים שיוצרו מה-Excel ======
-    const DOMAIN_COLORS = {json.dumps(assigned_colors, ensure_ascii=False)};
-    const itemsArray = {json.dumps(items, ensure_ascii=False)};
+  function render(){
+    const el=document.getElementById('gantt');
+    if(!Array.isArray(inlineData) || !inlineData.length){
+      el.innerHTML="<p class='text-center text-warning p-4'>אין נתונים</p>";
+      return;
+    }
+    const gantt = new Gantt("#gantt", inlineData.map(normalizeTask), {
+      view_mode:"Month",
+      custom_popup_html:task=>{
+        return `<div class="details-container">
+          <div class="fw-bold">${task.name}</div>
+          <div>תחום: ${task.domain||'-'}</div>
+          <div>תאריכים: ${task.start} → ${task.end}</div>
+          <div>התקדמות: ${task.progress??0}%</div>
+        </div>`;
+      }
+    });
+    gantt.gantt_start = new Date("2025-01-01");
+    gantt.gantt_end = new Date("2026-12-31");
+    gantt.setup_dates();
+    gantt.render();
+    hebrewizeMonths();
+  }
 
-    // ====== vis DataSets ======
-    const groupsData = new vis.DataSet(Object.keys(DOMAIN_COLORS).map((name) => ({{ id: name, content: name }})));
-    const itemsData = new vis.DataSet(itemsArray);
-
-    // ====== Legend and filters ======
-    const legend = document.getElementById('legend');
-    const filters = document.getElementById('filters');
-
-    Object.entries(DOMAIN_COLORS).forEach(([name, color])=>{{
-      const span = document.createElement('span');
-      span.innerHTML = `<span class="dot" style="background:${{color}}"></span>${{name}}`;
-      legend.appendChild(span);
-
-      const label = document.createElement('label');
-      label.style.marginInlineEnd = '12px';
-      label.innerHTML = `<input type="checkbox" class="domain-filter" value="${{name}}" checked> ${{name}}`;
-      filters.appendChild(label);
-    }});
-
-    // ====== Timeline ======
-    const container = document.getElementById('timeline');
-
-    function itemTemplate(item, element){{
-      const color = DOMAIN_COLORS[item.group] || '#999';
-      element.style.background = color;
-      element.style.borderColor = color;
-      element.style.color = '#fff';
-      element.title = item.title || item.content;
-      return element;
-    }}
-
-    // Calculate default window from min/max of items
-    const dates = itemsArray.flatMap(it => [new Date(it.start), new Date(it.end)]);
-    const minDate = new Date(Math.min(...dates.map(d=>d.getTime())));
-    const maxDate = new Date(Math.max(...dates.map(d=>d.getTime())));
-
-    const options = {{
-      locale: 'he',
-      orientation: 'top',
-      rtl: true,
-      stack: true,
-      maxHeight: 380,
-      zoomMin: 1000 * 60 * 60 * 24 * 3,
-      zoomMax: 1000 * 60 * 60 * 24 * 366 * 3,
-      start: minDate,
-      end: maxDate,
-      editable: false,
-      margin: {{item:{{horizontal:6, vertical:8}}}},
-      template: itemTemplate,
-      groupOrder: (a,b)=> a.id.localeCompare(b.id, 'he')
-    }};
-
-    const timeline = new vis.Timeline(container, itemsData, groupsData, options);
-
-    // Zoom controls
-    const ZOOM_STEP = 0.6;
-    function setRange(start, end){{ timeline.setWindow(start, end, {{animation: {{duration:400}}}}); }}
-    function getRange(){{ const r = timeline.getWindow(); return {{start:r.start.valueOf(), end:r.end.valueOf()}}; }}
-    document.getElementById('zoomIn').onclick = ()=>{{ const r=getRange(); const i=r.end-r.start; const ni=i*ZOOM_STEP; const c=r.start+i/2; setRange(c-ni/2, c+ni/2); }};
-    document.getElementById('zoomOut').onclick = ()=>{{ const r=getRange(); const i=r.end-r.start; const ni=i/ZOOM_STEP; const c=r.start+i/2; setRange(c-ni/2, c+ni/2); }};
-    document.getElementById('fitAll').onclick = ()=> setRange(minDate, maxDate);
-
-    // ====== Table rendering ======
-    const tableBody = document.querySelector('#tasksTable tbody');
-    const statusClass = s => (s>=100? 's-done' : s>0 ? 's-progress': 's-plan');
-
-    function fmtDate(d){{ return new Date(d).toLocaleDateString('he-IL', {{year:'numeric', month:'2-digit', day:'2-digit'}}); }}
-
-    function renderTable(selected){{
-      tableBody.innerHTML = '';
-      const visible = itemsArray.filter(it => !selected || selected.has(it.group))
-                                .sort((a,b)=> new Date(a.start)-new Date(b.start));
-      visible.forEach((it, idx)=>{{
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${{idx+1}}</td>
-          <td><span class="chip"><span class="dot" style="background:${{DOMAIN_COLORS[it.group]||'#999'}}"></span>${{it.group}}</span></td>
-          <td><strong>${{it.content}}</strong></td>
-          <td>${{fmtDate(it.start)}}</td>
-          <td>${{fmtDate(it.end)}}</td>
-          <td><span class="status ${{statusClass(parseInt((it.title||'0').replace(/\\D/g,'')))}}">${{(it.title||'0')}}</span></td>
-          <td><a href="#!" onclick="timeline.focus(${{JSON.stringify(it.id)}});return false;">הצג בגאנט</a></td>
-        `;
-        tableBody.appendChild(tr);
-      }});
-    }}
-    renderTable();
-
-    // Filters
-    function rebuild(){{
-      const selected = new Set([...document.querySelectorAll('.domain-filter')].filter(i=>i.checked).map(i=>i.value));
-      // Update timeline items
-      const filtered = itemsArray.filter(it => selected.has(it.group));
-      timeline.setItems(new vis.DataSet(filtered));
-      timeline.setGroups(groupsData);
-      renderTable(selected);
-    }}
-    document.querySelectorAll('.domain-filter').forEach(el => el.addEventListener('change', rebuild));
-  </script>
+  document.addEventListener("DOMContentLoaded", render);
+</script>
 </body>
 </html>
-"""
+```
 
-# Save to file
-out_path = Path("/mnt/data/index.html")
-out_path.write_text(html_template, encoding="utf-8")
+ניתן להוסיף, להסיר או לערוך משימות ישירות במערך inlineData שבקובץ כדי לעדכן את לוח הגאנט בקלות[1]. הקוד עובד מיידית לאחר העלאה כקובץ HTML ב-GitHub Pages או כל שירות אחסון סטטי אחר.הנה דף HTML מלא, מוכן להעלאה ל-GitHub Pages, שבו כל המשימות יושבות בתוך הקובץ – ב־inlineData – כך שאפשר לערוך ישירות את הקובץ ולהעלות שוב עם כל שינוי:
 
-out_path.as_posix()
+```html
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>לוח גאנט — אלנג'אח رهט (שכבה י׳)</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" rel="stylesheet">
+  <style>
+    body { background:#ffffff; color:#000; direction:rtl; }
+    header { background:#f3f4f6; padding:1rem; margin-bottom:1rem; border-bottom:2px solid #e5e7eb; }
+    .card { background:#fff; border:1px solid #ddd; border-radius:12px; }
+    .legend span { margin-inline-end:1rem; color:#111; font-size:.9rem }
+    .legend i { display:inline-block; width:14px; height:14px; border-radius:3px; margin-left:6px; }
+    .lg-p{background:#ef4b6c;} .lg-k{background:#06b6d4;}
+    .lg-t{background:#ff9800;} .lg-m{background:#43a047;} .lg-h{background:#9e9e9e;}
+    .gantt .bar-פדגוגי{fill:#ef4b6c;}
+    .gantt .bar-קהילתי{fill:#06b6d4;}
+    .gantt .bar-טכנולוגי{fill:#ff9800;}
+    .gantt .bar-מוסדי{fill:#43a047;}
+    .gantt .bar-חברתי{fill:#9e9e9e;}
+    .gantt .grid-header .upper-text,
+    .gantt .grid-header .lower-text {fill:#000;font-weight:700}
+    .gantt .bar text {
+      fill:#000 !important;
+      font-weight:800;
+      font-size:14px;
+    }
+    .details-container {
+      background:#f9fafb; color:#000; padding:10px; border-radius:10px; text-align:right;
+      border:1px solid #ddd;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="container d-flex align-items-center gap-3">
+    <img src="logo.png" alt="לוגו" style="height:60px;">
+    <h1 class="h4 m-0">📘 בית ספר אלנג'אח — Rahat (שכבה י׳)</h1>
+  </div>
+  <div class="container legend mt-2">
+    <span><i class="lg-p"></i> פדגוגי</span>
+    <span><i class="lg-k"></i> קהילתי</span>
+    <span><i class="lg-t"></i> טכנולוגי</span>
+    <span><i class="lg-m"></i> מוסדי</span>
+    <span><i class="lg-h"></i> חברתי</span>
+  </div>
+</header>
+
+<main class="container pb-5">
+  <div class="card">
+    <div class="card-body" style="overflow-x:auto;">
+      <div id="gantt" style="min-width:1100px;"></div>
+    </div>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+<script>
+  // כאן מוגדרות כל המשימות שלך, אפשר לערוך או להוסיף כרצונך:
+  const inlineData = [
+    {
+      id: "1",
+      name: "פתיחת שנת הלימודים",
+      domain: "פדגוגי",
+      start: "2025-09-01",
+      end: "2025-09-10",
+      progress: 100
+    },
+    {
+      id: "2",
+      name: "שבוע קהילה",
+      domain: "קהילתי",
+      start: "2025-10-05",
+      end: "2025-10-10",
+      progress: 40
+    },
+    {
+      id: "3",
+      name: "שבוע טכנולוגי",
+      domain: "טכנולוגי",
+      start: "2025-11-01",
+      end: "2025-11-07",
+      progress: 0
+    },
+    {
+      id: "4",
+      name: "שיפוץ מועדון תלמידים",
+      domain: "מוסדי",
+      start: "2025-09-15",
+      end: "2025-09-30",
+      progress: 30
+    },
+    {
+      id: "5",
+      name: "הפסקה פעילה",
+      domain: "חברתי",
+      start: "2025-12-10",
+      end: "2025-12-10",
+      progress: 0
+    }
+    // הוסף עוד משימות לפי הצורך
+  ];
+
+  function normalizeDate(dateStr){
+    if(!dateStr) return "";
+    if(/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+    const d = new Date(dateStr);
+    if(!isNaN(d)){
+      const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0");
+      return `${y}-${m}-${da}`;
+    }
+    return dateStr;
+  }
+
+  function normalizeTask(t){
+    return {
+      id:String(t.id),
+      domain:t.domain,
+      name:t.name,
+      start:normalizeDate(t.start),
+      end:normalizeDate(t.end),
+      progress:Number(t.progress||0)
+    };
+  }
+
+  // החודשים בעברית
+  const MONTHS_EN2HE = {
+    "January":"ינואר","February":"פברואר","March":"מרץ","April":"אפריל","May":"מאי","June":"יוני",
+    "July":"יולי","August":"אוגוסט","September":"ספטמבר","October":"אוקטובר","November":"נובמבר","December":"דצמבר"
+  };
+  function hebrewizeMonths(){
+    document.querySelectorAll("#gantt .upper-text").forEach(el=>{
+      const t=(el.textContent||"").trim();
+      if(MONTHS_EN2HE[t]) el.textContent = MONTHS_EN2HE[t];
+    });
+  }
+
+  function render(){
+    const el=document.getElementById('gantt');
+    if(!Array.isArray(inlineData) || !inlineData.length){
+      el.innerHTML="<p class='text-center text-warning p-4'>אין נתונים</p>";
+      return;
+    }
+    const gantt = new Gantt("#gantt", inlineData.map(normalizeTask), {
+      view_mode:"Month",
+      custom_popup_html:task=>{
+        return `<div class="details-container">
+          <div class="fw-bold">${task.name}</div>
+          <div>תחום: ${task.domain||'-'}</div>
+          <div>תאריכים: ${task.start} → ${task.end}</div>
+          <div>התקדמות: ${task.progress??0}%</div>
+        </div>`;
+      }
+    });
+    gantt.gantt_start = new Date("2025-01-01");
+    gantt.gantt_end = new Date("2026-12-31");
+    gantt.setup_dates();
+    gantt.render();
+    hebrewizeMonths();
+  }
+
+  document.addEventListener("DOMContentLoaded", render);
+</script>
+</body>
+</html>
+```
+
+אפשר להחליף או להרחיב את המשימות במערך, ושאר העיצוב והתנהגות הדף יישארו נוחים ומזמינים[1].הנה הקוד שלך כולל הכל, כשהמשימות יושבות ישירות כ־inlineData כך שלא צריך קובץ חיצוני:
+
+```html
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>לוח גאנט — אלנג'אח رهט (שכבה י׳)</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" rel="stylesheet">
+  <style>
+    body { background:#ffffff; color:#000; direction:rtl; }
+    header { background:#f3f4f6; padding:1rem; margin-bottom:1rem; border-bottom:2px solid #e5e7eb; }
+    .card { background:#fff; border:1px solid #ddd; border-radius:12px; }
+    .legend span { margin-inline-end:1rem; color:#111; font-size:.9rem }
+    .legend i { display:inline-block; width:14px; height:14px; border-radius:3px; margin-left:6px; }
+    .lg-p{background:#ef4b6c;} .lg-k{background:#06b6d4;}
+    .lg-t{background:#ff9800;} .lg-m{background:#43a047;} .lg-h{background:#9e9e9e;}
+    .gantt .bar-פדגוגי{fill:#ef4b6c;}
+    .gantt .bar-קהילתי{fill:#06b6d4;}
+    .gantt .bar-טכנולוגי{fill:#ff9800;}
+    .gantt .bar-מוסדי{fill:#43a047;}
+    .gantt .bar-חברתי{fill:#9e9e9e;}
+    .gantt .grid-header .upper-text,
+    .gantt .grid-header .lower-text {fill:#000;font-weight:700}
+    .gantt .bar text {
+      fill:#000 !important;
+      font-weight:800;
+      font-size:14px;
+    }
+    .details-container {
+      background:#f9fafb; color:#000; padding:10px; border-radius:10px; text-align:right;
+      border:1px solid #ddd;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="container d-flex align-items-center gap-3">
+    <img src="logo.png" alt="לוגו" style="height:60px;">
+    <h1 class="h4 m-0">📘 בית ספר אלנג'אח — Rahat (שכבה י׳)</h1>
+  </div>
+  <div class="container legend mt-2">
+    <span><i class="lg-p"></i> פדגוגי</span>
+    <span><i class="lg-k"></i> קהילתי</span>
+    <span><i class="lg-t"></i> טכנולוגי</span>
+    <span><i class="lg-m"></i> מוסדי</span>
+    <span><i class="lg-h"></i> חברתי</span>
+  </div>
+</header>
+
+<main class="container pb-5">
+  <div class="card">
+    <div class="card-body" style="overflow-x:auto;">
+      <div id="gantt" style="min-width:1100px;"></div>
+    </div>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+<script>
+  // כאן המשימות שלך
+  const inlineData = [
+    {
+      id: "1",
+      name: "פתיחת שנת הלימודים",
+      domain: "פדגוגי",
+      start: "2025-09-01",
+      end: "2025-09-10",
+      progress: 100
+    },
+    {
+      id: "2",
+      name: "שבוע קהילה",
+      domain: "קהילתי",
+      start: "2025-10-05",
+      end: "2025-10-10",
+      progress: 40
+    },
+    {
+      id: "3",
+      name: "שבוע טכנולוגי",
+      domain: "טכנולוגי",
+      start: "2025-11-01",
+      end: "2025-11-07",
+      progress: 0
+    },
+    {
+      id: "4",
+      name: "שיפוץ מועדון תלמידים",
+      domain: "מוסדי",
+      start: "2025-09-15",
+      end: "2025-09-30",
+      progress: 30
+    },
+    {
+      id: "5",
+      name: "הפסקה פעילה",
+      domain: "חברתי",
+      start: "2025-12-10",
+      end: "2025-12-10",
+      progress: 0
+    }
+  ];
+
+  function normalizeDate(dateStr){
+    if(!dateStr) return "";
+    if(/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+    const d = new Date(dateStr);
+    if(!isNaN(d)){
+      const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0");
+      return `${y}-${m}-${da}`;
+    }
+    return dateStr;
+  }
+
+  function normalizeTask(t){
+    return {
+      id:String(t.id),
+      domain:t.domain,
+      name:t.name,
+      start:normalizeDate(t.start),
+      end:normalizeDate(t.end),
+      progress:Number(t.progress||0)
+    };
+  }
+
+  // החודשים בעברית
+  const MONTHS_EN2HE = {
+    "January":"ינואר","February":"פברואר","March":"מרץ","April":"אפריל","May":"מאי","June":"יוני",
+    "July":"יולי","August":"אוגוסט","September":"ספטמבר","October":"אוקטובר","November":"נובמבר","December":"דצמבר"
+  };
+  function hebrewizeMonths(){
+    document.querySelectorAll("#gantt .upper-text").forEach(el=>{
+      const t=(el.textContent||"").trim();
+      if(MONTHS_EN2HE[t]) el.textContent = MONTHS_EN2HE[t];
+    });
+  }
+
+  function render(){
+    const el=document.getElementById('gantt');
+    if(!Array.isArray(inlineData) || !inlineData.length){
+      el.innerHTML="<p class='text-center text-warning p-4'>אין נתונים</p>";
+      return;
+    }
+    const gantt = new Gantt("#gantt", inlineData.map(normalizeTask), {
+      view_mode:"Month",
+      custom_popup_html:task=>{
+        return `<div class="details-container">
+          <div class="fw-bold">${task.name}</div>
+          <div>תחום: ${task.domain||'-'}</div>
+          <div>תאריכים: ${task.start} → ${task.end}</div>
+          <div>התקדמות: ${task.progress??0}%</div>
+        </div>`;
+      }
+    });
+    gantt.gantt_start = new Date("2025-01-01");
+    gantt.gantt_end = new Date("2026-12-31");
+    gantt.setup_dates();
+    gantt.render();
+    hebrewizeMonths();
+  }
+
+  document.addEventListener("DOMContentLoaded", render);
+</script>
+</body>
+</html>
+```
+
+להוסיף ולהסיר משימות פשוט בתוך מערך inlineData, בלי שום תלות חיצונית[1].להלן קוד HTML מעודכן ללוח גאנט, כאשר כל המשימות כלולות ישירות בקובץ במסגרת inlineData. אפשר להעתיק, להדביק, ולהעלות כקובץ סטטי (ל־GitHub Pages למשל).
+
+```html
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>לוח גאנט — אלנג'אח رهט (שכבה י׳)</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" rel="stylesheet">
+  <style>
+    body { background:#ffffff; color:#000; direction:rtl; }
+    header { background:#f3f4f6; padding:1rem; margin-bottom:1rem; border-bottom:2px solid #e5e7eb; }
+    .card { background:#fff; border:1px solid #ddd; border-radius:12px; }
+    .legend span { margin-inline-end:1rem; color:#111; font-size:.9rem }
+    .legend i { display:inline-block; width:14px; height:14px; border-radius:3px; margin-left:6px; }
+    .lg-p{background:#ef4b6c;} .lg-k{background:#06b6d4;}
+    .lg-t{background:#ff9800;} .lg-m{background:#43a047;} .lg-h{background:#9e9e9e;}
+    .gantt .bar-פדגוגי{fill:#ef4b6c;}
+    .gantt .bar-קהילתי{fill:#06b6d4;}
+    .gantt .bar-טכנולוגי{fill:#ff9800;}
+    .gantt .bar-מוסדי{fill:#43a047;}
+    .gantt .bar-חברתי{fill:#9e9e9e;}
+    .gantt .grid-header .upper-text,
+    .gantt .grid-header .lower-text {fill:#000;font-weight:700}
+    .gantt .bar text {
+      fill:#000 !important;
+      font-weight:800;
+      font-size:14px;
+    }
+    .details-container {
+      background:#f9fafb; color:#000; padding:10px; border-radius:10px; text-align:right;
+      border:1px solid #ddd;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="container d-flex align-items-center gap-3">
+    <img src="logo.png" alt="לוגו" style="height:60px;">
+    <h1 class="h4 m-0">📘 בית ספר אלנג'אח — Rahat (שכבה י׳)</h1>
+  </div>
+  <div class="container legend mt-2">
+    <span><i class="lg-p"></i> פדגוגי</span>
+    <span><i class="lg-k"></i> קהילתי</span>
+    <span><i class="lg-t"></i> טכנולוגי</span>
+    <span><i class="lg-m"></i> מוסדי</span>
+    <span><i class="lg-h"></i> חברתי</span>
+  </div>
+</header>
+
+<main class="container pb-5">
+  <div class="card">
+    <div class="card-body" style="overflow-x:auto;">
+      <div id="gantt" style="min-width:1100px;"></div>
+    </div>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+<script>
+  const inlineData = [
+    {
+      id: "1",
+      name: "פתיחת שנת הלימודים",
+      domain: "פדגוגי",
+      start: "2025-09-01",
+      end: "2025-09-10",
+      progress: 100
+    },
+    {
+      id: "2",
+      name: "שבוע קהילה",
+      domain: "קהילתי",
+      start: "2025-10-05",
+      end: "2025-10-10",
+      progress: 40
+    },
+    {
+      id: "3",
+      name: "שבוע טכנולוגי",
+      domain: "טכנולוגי",
+      start: "2025-11-01",
+      end: "2025-11-07",
+      progress: 0
+    },
+    {
+      id: "4",
+      name: "שיפוץ מועדון תלמידים",
+      domain: "מוסדי",
+      start: "2025-09-15",
+      end: "2025-09-30",
+      progress: 30
+    },
+    {
+      id: "5",
+      name: "הפסקה פעילה",
+      domain: "חברתי",
+      start: "2025-12-10",
+      end: "2025-12-10",
+      progress: 0
+    }
+  ];
+
+  function normalizeDate(dateStr){
+    if(!dateStr) return "";
+    if(/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+    const d = new Date(dateStr);
+    if(!isNaN(d)){
+      const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0");
+      return `${y}-${m}-${da}`;
+    }
+    return dateStr;
+  }
+
+  function normalizeTask(t){
+    return {
+      id:String(t.id),
+      domain:t.domain,
+      name:t.name,
+      start:normalizeDate(t.start),
+      end:normalizeDate(t.end),
+      progress:Number(t.progress||0)
+    };
+  }
+
+  const MONTHS_EN2HE = {
+    "January":"ינואר","February":"פברואר","March":"מרץ","April":"אפריל","May":"מאי","June":"יוני",
+    "July":"יולי","August":"אוגוסט","September":"ספטמבר","October":"אוקטובר","November":"נובמבר","December":"דצמבר"
+  };
+  function hebrewizeMonths(){
+    document.querySelectorAll("#gantt .upper-text").forEach(el=>{
+      const t=(el.textContent||"").trim();
+      if(MONTHS_EN2HE[t]) el.textContent = MONTHS_EN2HE[t];
+    });
+  }
+
+  function render(){
+    const el=document.getElementById('gantt');
+    if(!Array.isArray(inlineData) || !inlineData.length){
+      el.innerHTML="<p class='text-center text-warning p-4'>אין נתונים</p>";
+      return;
+    }
+    const gantt = new Gantt("#gantt", inlineData.map(normalizeTask), {
+      view_mode:"Month",
+      custom_popup_html:task=>{
+        return `<div class="details-container">
+          <div class="fw-bold">${task.name}</div>
+          <div>תחום: ${task.domain||'-'}</div>
+          <div>תאריכים: ${task.start} → ${task.end}</div>
+          <div>התקדמות: ${task.progress??0}%</div>
+        </div>`;
+      }
+    });
+    gantt.gantt_start = new Date("2025-01-01");
+    gantt.gantt_end = new Date("2026-12-31");
+    gantt.setup_dates();
+    gantt.render();
+    hebrewizeMonths();
+  }
+
+  document.addEventListener("DOMContentLoaded", render);
+</script>
+</body>
+</html>
+```
+
+כל מה שצריך זה להעלות את הקובץ ולערוך את המשימות לפי הצורך[1].
+
+Citations:
+[1] bootstrap CDN files https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/
+אז תן לי את הקוד מחדש
+
+להלן קוד מלא של דף HTML ללוח גאנט בעברית, כשהמשימות מובנות ישר בקוד (inline) במערך inlineData — כך תוכל להעתיק, לעלות ל-GitHub Pages, ולעדכן בקלות כל משימה על פי מבנה הדוגמה:
+
+```html
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>לוח גאנט — אלנג'אח رهט (שכבה י׳)</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" rel="stylesheet">
+
+  <style>
+    body { background:#ffffff; color:#000; direction:rtl; }
+    header { background:#f3f4f6; padding:1rem; margin-bottom:1rem; border-bottom:2px solid #e5e7eb; }
+    .card { background:#fff; border:1px solid #ddd; border-radius:12px; }
+
+    .legend span { margin-inline-end:1rem; color:#111; font-size:.9rem }
+    .legend i { display:inline-block; width:14px; height:14px; border-radius:3px; margin-left:6px; }
+    .lg-p{background:#ef4b6c;} .lg-k{background:#06b6d4;}
+    .lg-t{background:#ff9800;} .lg-m{background:#43a047;} .lg-h{background:#9e9e9e;}
+
+    .gantt .bar-פדגוגי{fill:#ef4b6c;}
+    .gantt .bar-קהילתי{fill:#06b6d4;}
+    .gantt .bar-טכנולוגי{fill:#ff9800;}
+    .gantt .bar-מוסדי{fill:#43a047;}
+    .gantt .bar-חברתי{fill:#9e9e9e;}
+
+    .gantt .grid-header .upper-text,
+    .gantt .grid-header .lower-text {fill:#000;font-weight:700}
+    .gantt .bar text {
+      fill:#000 !important;
+      font-weight:800;
+      font-size:14px;
+    }
+
+    .details-container {
+      background:#f9fafb; color:#000; padding:10px; border-radius:10px; text-align:right;
+      border:1px solid #ddd;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="container d-flex align-items-center gap-3">
+    <img src="logo.png" alt="לוגו" style="height:60px;">
+    <h1 class="h4 m-0">📘 בית ספר אלנג'אח — Rahat (שכבה י׳)</h1>
+  </div>
+  <div class="container legend mt-2">
+    <span><i class="lg-p"></i> פדגוגי</span>
+    <span><i class="lg-k"></i> קהילתי</span>
+    <span><i class="lg-t"></i> טכנולוגי</span>
+    <span><i class="lg-m"></i> מוסדי</span>
+    <span><i class="lg-h"></i> חברתי</span>
+  </div>
+</header>
+
+<main class="container pb-5">
+  <div class="card">
+    <div class="card-body" style="overflow-x:auto;">
+      <div id="gantt" style="min-width:1100px;"></div>
+    </div>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+<script>
+  // כאן מוגדרות המשימות
+  const inlineData = [
+    {
+      id: "1",
+      name: "פתיחת שנת הלימודים",
+      domain: "פדגוגי",
+      start: "2025-09-01",
+      end: "2025-09-10",
+      progress: 100
+    },
+    {
+      id: "2",
+      name: "שבוע קהילה",
+      domain: "קהילתי",
+      start: "2025-10-05",
+      end: "2025-10-10",
+      progress: 40
+    },
+    {
+      id: "3",
+      name: "שבוע טכנולוגי",
+      domain: "טכנולוגי",
+      start: "2025-11-01",
+      end: "2025-11-07",
+      progress: 0
+    },
+    {
+      id: "4",
+      name: "שיפוץ מועדון תלמידים",
+      domain: "מוסדי",
+      start: "2025-09-15",
+      end: "2025-09-30",
+      progress: 30
+    },
+    {
+      id: "5",
+      name: "הפסקה פעילה",
+      domain: "חברתי",
+      start: "2025-12-10",
+      end: "2025-12-10",
+      progress: 0
+    }
+    // אפשר להוסיף כאן משימות נוספות
+  ];
+
+  function normalizeDate(dateStr){
+    if(!dateStr) return "";
+    if(/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+    const d = new Date(dateStr);
+    if(!isNaN(d)){
+      const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0");
+      return `${y}-${m}-${da}`;
+    }
+    return dateStr;
+  }
+
+  function normalizeTask(t){
+    return {
+      id:String(t.id),
+      domain:t.domain,
+      name:t.name,
+      start:normalizeDate(t.start),
+      end:normalizeDate(t.end),
+      progress:Number(t.progress||0)
+    };
+  }
+
+  // החודשים בעברית
+  const MONTHS_EN2HE = {
+    "January":"ינואר","February":"פברואר","March":"מרץ","April":"אפריל","May":"מאי","June":"יוני",
+    "July":"יולי","August":"אוגוסט","September":"ספטמבר","October":"אוקטובר","November":"נובמבר","December":"דצמבר"
+  };
+  function hebrewizeMonths(){
+    document.querySelectorAll("#gantt .upper-text").forEach(el=>{
+      const t=(el.textContent||"").trim();
+      if(MONTHS_EN2HE[t]) el.textContent = MONTHS_EN2HE[t];
+    });
+  }
+
+  function render(){
+    const el=document.getElementById('gantt');
+    if(!Array.isArray(inlineData) || !inlineData.length){
+      el.innerHTML="<p class='text-center text-warning p-4'>אין נתונים</p>";
+      return;
+    }
+    const gantt = new Gantt("#gantt", inlineData.map(normalizeTask), {
+      view_mode:"Month",
+      custom_popup_html:task=>{
+        return `<div class="details-container">
+          <div class="fw-bold">${task.name}</div>
+          <div>תחום: ${task.domain||'-'}</div>
+          <div>תאריכים: ${task.start} → ${task.end}</div>
+          <div>התקדמות: ${task.progress??0}%</div>
+        </div>`;
+      }
+    });
+    gantt.gantt_start = new Date("2025-01-01");
+    gantt.gantt_end = new Date("2026-12-31");
+    gantt.setup_dates();
+    gantt.render();
+    hebrewizeMonths();
+  }
+
+  document.addEventListener("DOMContentLoaded", render);
+</script>
+</body>
+</html>
+```
+
+ניתן להוסיף, להסיר או לערוך משימות ישירות במערך inlineData שבקובץ כדי לעדכן את לוח הגאנט בקלות[1]. הקוד עובד מיידית לאחר העלאה כקובץ HTML ב-GitHub Pages או כל שירות אחסון סטטי אחר.הנה דף HTML מלא, מוכן להעלאה ל-GitHub Pages, שבו כל המשימות יושבות בתוך הקובץ – ב־inlineData – כך שאפשר לערוך ישירות את הקובץ ולהעלות שוב עם כל שינוי:
+
+```html
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>לוח גאנט — אלנג'אח رهט (שכבה י׳)</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" rel="stylesheet">
+  <style>
+    body { background:#ffffff; color:#000; direction:rtl; }
+    header { background:#f3f4f6; padding:1rem; margin-bottom:1rem; border-bottom:2px solid #e5e7eb; }
+    .card { background:#fff; border:1px solid #ddd; border-radius:12px; }
+    .legend span { margin-inline-end:1rem; color:#111; font-size:.9rem }
+    .legend i { display:inline-block; width:14px; height:14px; border-radius:3px; margin-left:6px; }
+    .lg-p{background:#ef4b6c;} .lg-k{background:#06b6d4;}
+    .lg-t{background:#ff9800;} .lg-m{background:#43a047;} .lg-h{background:#9e9e9e;}
+    .gantt .bar-פדגוגי{fill:#ef4b6c;}
+    .gantt .bar-קהילתי{fill:#06b6d4;}
+    .gantt .bar-טכנולוגי{fill:#ff9800;}
+    .gantt .bar-מוסדי{fill:#43a047;}
+    .gantt .bar-חברתי{fill:#9e9e9e;}
+    .gantt .grid-header .upper-text,
+    .gantt .grid-header .lower-text {fill:#000;font-weight:700}
+    .gantt .bar text {
+      fill:#000 !important;
+      font-weight:800;
+      font-size:14px;
+    }
+    .details-container {
+      background:#f9fafb; color:#000; padding:10px; border-radius:10px; text-align:right;
+      border:1px solid #ddd;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="container d-flex align-items-center gap-3">
+    <img src="logo.png" alt="לוגו" style="height:60px;">
+    <h1 class="h4 m-0">📘 בית ספר אלנג'אח — Rahat (שכבה י׳)</h1>
+  </div>
+  <div class="container legend mt-2">
+    <span><i class="lg-p"></i> פדגוגי</span>
+    <span><i class="lg-k"></i> קהילתי</span>
+    <span><i class="lg-t"></i> טכנולוגי</span>
+    <span><i class="lg-m"></i> מוסדי</span>
+    <span><i class="lg-h"></i> חברתי</span>
+  </div>
+</header>
+
+<main class="container pb-5">
+  <div class="card">
+    <div class="card-body" style="overflow-x:auto;">
+      <div id="gantt" style="min-width:1100px;"></div>
+    </div>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+<script>
+  // כאן מוגדרות כל המשימות שלך, אפשר לערוך או להוסיף כרצונך:
+  const inlineData = [
+    {
+      id: "1",
+      name: "פתיחת שנת הלימודים",
+      domain: "פדגוגי",
+      start: "2025-09-01",
+      end: "2025-09-10",
+      progress: 100
+    },
+    {
+      id: "2",
+      name: "שבוע קהילה",
+      domain: "קהילתי",
+      start: "2025-10-05",
+      end: "2025-10-10",
+      progress: 40
+    },
+    {
+      id: "3",
+      name: "שבוע טכנולוגי",
+      domain: "טכנולוגי",
+      start: "2025-11-01",
+      end: "2025-11-07",
+      progress: 0
+    },
+    {
+      id: "4",
+      name: "שיפוץ מועדון תלמידים",
+      domain: "מוסדי",
+      start: "2025-09-15",
+      end: "2025-09-30",
+      progress: 30
+    },
+    {
+      id: "5",
+      name: "הפסקה פעילה",
+      domain: "חברתי",
+      start: "2025-12-10",
+      end: "2025-12-10",
+      progress: 0
+    }
+    // הוסף עוד משימות לפי הצורך
+  ];
+
+  function normalizeDate(dateStr){
+    if(!dateStr) return "";
+    if(/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+    const d = new Date(dateStr);
+    if(!isNaN(d)){
+      const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0");
+      return `${y}-${m}-${da}`;
+    }
+    return dateStr;
+  }
+
+  function normalizeTask(t){
+    return {
+      id:String(t.id),
+      domain:t.domain,
+      name:t.name,
+      start:normalizeDate(t.start),
+      end:normalizeDate(t.end),
+      progress:Number(t.progress||0)
+    };
+  }
+
+  // החודשים בעברית
+  const MONTHS_EN2HE = {
+    "January":"ינואר","February":"פברואר","March":"מרץ","April":"אפריל","May":"מאי","June":"יוני",
+    "July":"יולי","August":"אוגוסט","September":"ספטמבר","October":"אוקטובר","November":"נובמבר","December":"דצמבר"
+  };
+  function hebrewizeMonths(){
+    document.querySelectorAll("#gantt .upper-text").forEach(el=>{
+      const t=(el.textContent||"").trim();
+      if(MONTHS_EN2HE[t]) el.textContent = MONTHS_EN2HE[t];
+    });
+  }
+
+  function render(){
+    const el=document.getElementById('gantt');
+    if(!Array.isArray(inlineData) || !inlineData.length){
+      el.innerHTML="<p class='text-center text-warning p-4'>אין נתונים</p>";
+      return;
+    }
+    const gantt = new Gantt("#gantt", inlineData.map(normalizeTask), {
+      view_mode:"Month",
+      custom_popup_html:task=>{
+        return `<div class="details-container">
+          <div class="fw-bold">${task.name}</div>
+          <div>תחום: ${task.domain||'-'}</div>
+          <div>תאריכים: ${task.start} → ${task.end}</div>
+          <div>התקדמות: ${task.progress??0}%</div>
+        </div>`;
+      }
+    });
+    gantt.gantt_start = new Date("2025-01-01");
+    gantt.gantt_end = new Date("2026-12-31");
+    gantt.setup_dates();
+    gantt.render();
+    hebrewizeMonths();
+  }
+
+  document.addEventListener("DOMContentLoaded", render);
+</script>
+</body>
+</html>
+```
+
+אפשר להחליף או להרחיב את המשימות במערך, ושאר העיצוב והתנהגות הדף יישארו נוחים ומזמינים[1].הנה הקוד שלך כולל הכל, כשהמשימות יושבות ישירות כ־inlineData כך שלא צריך קובץ חיצוני:
+
+```html
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>לוח גאנט — אלנג'אח رهט (שכבה י׳)</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" rel="stylesheet">
+  <style>
+    body { background:#ffffff; color:#000; direction:rtl; }
+    header { background:#f3f4f6; padding:1rem; margin-bottom:1rem; border-bottom:2px solid #e5e7eb; }
+    .card { background:#fff; border:1px solid #ddd; border-radius:12px; }
+    .legend span { margin-inline-end:1rem; color:#111; font-size:.9rem }
+    .legend i { display:inline-block; width:14px; height:14px; border-radius:3px; margin-left:6px; }
+    .lg-p{background:#ef4b6c;} .lg-k{background:#06b6d4;}
+    .lg-t{background:#ff9800;} .lg-m{background:#43a047;} .lg-h{background:#9e9e9e;}
+    .gantt .bar-פדגוגי{fill:#ef4b6c;}
+    .gantt .bar-קהילתי{fill:#06b6d4;}
+    .gantt .bar-טכנולוגי{fill:#ff9800;}
+    .gantt .bar-מוסדי{fill:#43a047;}
+    .gantt .bar-חברתי{fill:#9e9e9e;}
+    .gantt .grid-header .upper-text,
+    .gantt .grid-header .lower-text {fill:#000;font-weight:700}
+    .gantt .bar text {
+      fill:#000 !important;
+      font-weight:800;
+      font-size:14px;
+    }
+    .details-container {
+      background:#f9fafb; color:#000; padding:10px; border-radius:10px; text-align:right;
+      border:1px solid #ddd;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="container d-flex align-items-center gap-3">
+    <img src="logo.png" alt="לוגו" style="height:60px;">
+    <h1 class="h4 m-0">📘 בית ספר אלנג'אח — Rahat (שכבה י׳)</h1>
+  </div>
+  <div class="container legend mt-2">
+    <span><i class="lg-p"></i> פדגוגי</span>
+    <span><i class="lg-k"></i> קהילתי</span>
+    <span><i class="lg-t"></i> טכנולוגי</span>
+    <span><i class="lg-m"></i> מוסדי</span>
+    <span><i class="lg-h"></i> חברתי</span>
+  </div>
+</header>
+
+<main class="container pb-5">
+  <div class="card">
+    <div class="card-body" style="overflow-x:auto;">
+      <div id="gantt" style="min-width:1100px;"></div>
+    </div>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+<script>
+  // כאן המשימות שלך
+  const inlineData = [
+    {
+      id: "1",
+      name: "פתיחת שנת הלימודים",
+      domain: "פדגוגי",
+      start: "2025-09-01",
+      end: "2025-09-10",
+      progress: 100
+    },
+    {
+      id: "2",
+      name: "שבוע קהילה",
+      domain: "קהילתי",
+      start: "2025-10-05",
+      end: "2025-10-10",
+      progress: 40
+    },
+    {
+      id: "3",
+      name: "שבוע טכנולוגי",
+      domain: "טכנולוגי",
+      start: "2025-11-01",
+      end: "2025-11-07",
+      progress: 0
+    },
+    {
+      id: "4",
+      name: "שיפוץ מועדון תלמידים",
+      domain: "מוסדי",
+      start: "2025-09-15",
+      end: "2025-09-30",
+      progress: 30
+    },
+    {
+      id: "5",
+      name: "הפסקה פעילה",
+      domain: "חברתי",
+      start: "2025-12-10",
+      end: "2025-12-10",
+      progress: 0
+    }
+  ];
+
+  function normalizeDate(dateStr){
+    if(!dateStr) return "";
+    if(/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+    const d = new Date(dateStr);
+    if(!isNaN(d)){
+      const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0");
+      return `${y}-${m}-${da}`;
+    }
+    return dateStr;
+  }
+
+  function normalizeTask(t){
+    return {
+      id:String(t.id),
+      domain:t.domain,
+      name:t.name,
+      start:normalizeDate(t.start),
+      end:normalizeDate(t.end),
+      progress:Number(t.progress||0)
+    };
+  }
+
+  // החודשים בעברית
+  const MONTHS_EN2HE = {
+    "January":"ינואר","February":"פברואר","March":"מרץ","April":"אפריל","May":"מאי","June":"יוני",
+    "July":"יולי","August":"אוגוסט","September":"ספטמבר","October":"אוקטובר","November":"נובמבר","December":"דצמבר"
+  };
+  function hebrewizeMonths(){
+    document.querySelectorAll("#gantt .upper-text").forEach(el=>{
+      const t=(el.textContent||"").trim();
+      if(MONTHS_EN2HE[t]) el.textContent = MONTHS_EN2HE[t];
+    });
+  }
+
+  function render(){
+    const el=document.getElementById('gantt');
+    if(!Array.isArray(inlineData) || !inlineData.length){
+      el.innerHTML="<p class='text-center text-warning p-4'>אין נתונים</p>";
+      return;
+    }
+    const gantt = new Gantt("#gantt", inlineData.map(normalizeTask), {
+      view_mode:"Month",
+      custom_popup_html:task=>{
+        return `<div class="details-container">
+          <div class="fw-bold">${task.name}</div>
+          <div>תחום: ${task.domain||'-'}</div>
+          <div>תאריכים: ${task.start} → ${task.end}</div>
+          <div>התקדמות: ${task.progress??0}%</div>
+        </div>`;
+      }
+    });
+    gantt.gantt_start = new Date("2025-01-01");
+    gantt.gantt_end = new Date("2026-12-31");
+    gantt.setup_dates();
+    gantt.render();
+    hebrewizeMonths();
+  }
+
+  document.addEventListener("DOMContentLoaded", render);
+</script>
+</body>
+</html>
+```
+
+להוסיף ולהסיר משימות פשוט בתוך מערך inlineData, בלי שום תלות חיצונית[1].להלן קוד HTML מעודכן ללוח גאנט, כאשר כל המשימות כלולות ישירות בקובץ במסגרת inlineData. אפשר להעתיק, להדביק, ולהעלות כקובץ סטטי (ל־GitHub Pages למשל).
+
+```html
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>לוח גאנט — אלנג'אח رهט (שכבה י׳)</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" rel="stylesheet">
+  <style>
+    body { background:#ffffff; color:#000; direction:rtl; }
+    header { background:#f3f4f6; padding:1rem; margin-bottom:1rem; border-bottom:2px solid #e5e7eb; }
+    .card { background:#fff; border:1px solid #ddd; border-radius:12px; }
+    .legend span { margin-inline-end:1rem; color:#111; font-size:.9rem }
+    .legend i { display:inline-block; width:14px; height:14px; border-radius:3px; margin-left:6px; }
+    .lg-p{background:#ef4b6c;} .lg-k{background:#06b6d4;}
+    .lg-t{background:#ff9800;} .lg-m{background:#43a047;} .lg-h{background:#9e9e9e;}
+    .gantt .bar-פדגוגי{fill:#ef4b6c;}
+    .gantt .bar-קהילתי{fill:#06b6d4;}
+    .gantt .bar-טכנולוגי{fill:#ff9800;}
+    .gantt .bar-מוסדי{fill:#43a047;}
+    .gantt .bar-חברתי{fill:#9e9e9e;}
+    .gantt .grid-header .upper-text,
+    .gantt .grid-header .lower-text {fill:#000;font-weight:700}
+    .gantt .bar text {
+      fill:#000 !important;
+      font-weight:800;
+      font-size:14px;
+    }
+    .details-container {
+      background:#f9fafb; color:#000; padding:10px; border-radius:10px; text-align:right;
+      border:1px solid #ddd;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="container d-flex align-items-center gap-3">
+    <img src="logo.png" alt="לוגו" style="height:60px;">
+    <h1 class="h4 m-0">📘 בית ספר אלנג'אח — Rahat (שכבה י׳)</h1>
+  </div>
+  <div class="container legend mt-2">
+    <span><i class="lg-p"></i> פדגוגי</span>
+    <span><i class="lg-k"></i> קהילתי</span>
+    <span><i class="lg-t"></i> טכנולוגי</span>
+    <span><i class="lg-m"></i> מוסדי</span>
+    <span><i class="lg-h"></i> חברתי</span>
+  </div>
+</header>
+
+<main class="container pb-5">
+  <div class="card">
+    <div class="card-body" style="overflow-x:auto;">
+      <div id="gantt" style="min-width:1100px;"></div>
+    </div>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+<script>
+  const inlineData = [
+    {
+      id: "1",
+      name: "פתיחת שנת הלימודים",
+      domain: "פדגוגי",
+      start: "2025-09-01",
+      end: "2025-09-10",
+      progress: 100
+    },
+    {
+      id: "2",
+      name: "שבוע קהילה",
+      domain: "קהילתי",
+      start: "2025-10-05",
+      end: "2025-10-10",
+      progress: 40
+    },
+    {
+      id: "3",
+      name: "שבוע טכנולוגי",
+      domain: "טכנולוגי",
+      start: "2025-11-01",
+      end: "2025-11-07",
+      progress: 0
+    },
+    {
+      id: "4",
+      name: "שיפוץ מועדון תלמידים",
+      domain: "מוסדי",
+      start: "2025-09-15",
+      end: "2025-09-30",
+      progress: 30
+    },
+    {
+      id: "5",
+      name: "הפסקה פעילה",
+      domain: "חברתי",
+      start: "2025-12-10",
+      end: "2025-12-10",
+      progress: 0
+    }
+  ];
+
+  function normalizeDate(dateStr){
+    if(!dateStr) return "";
+    if(/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+    const d = new Date(dateStr);
+    if(!isNaN(d)){
+      const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0");
+      return `${y}-${m}-${da}`;
+    }
+    return dateStr;
+  }
+
+  function normalizeTask(t){
+    return {
+      id:String(t.id),
+      domain:t.domain,
+      name:t.name,
+      start:normalizeDate(t.start),
+      end:normalizeDate(t.end),
+      progress:Number(t.progress||0)
+    };
+  }
+
+  const MONTHS_EN2HE = {
+    "January":"ינואר","February":"פברואר","March":"מרץ","April":"אפריל","May":"מאי","June":"יוני",
+    "July":"יולי","August":"אוגוסט","September":"ספטמבר","October":"אוקטובר","November":"נובמבר","December":"דצמבר"
+  };
+  function hebrewizeMonths(){
+    document.querySelectorAll("#gantt .upper-text").forEach(el=>{
+      const t=(el.textContent||"").trim();
+      if(MONTHS_EN2HE[t]) el.textContent = MONTHS_EN2HE[t];
+    });
+  }
+
+  function render(){
+    const el=document.getElementById('gantt');
+    if(!Array.isArray(inlineData) || !inlineData.length){
+      el.innerHTML="<p class='text-center text-warning p-4'>אין נתונים</p>";
+      return;
+    }
+    const gantt = new Gantt("#gantt", inlineData.map(normalizeTask), {
+      view_mode:"Month",
+      custom_popup_html:task=>{
+        return `<div class="details-container">
+          <div class="fw-bold">${task.name}</div>
+          <div>תחום: ${task.domain||'-'}</div>
+          <div>תאריכים: ${task.start} → ${task.end}</div>
+          <div>התקדמות: ${task.progress??0}%</div>
+        </div>`;
+      }
+    });
+    gantt.gantt_start = new Date("2025-01-01");
+    gantt.gantt_end = new Date("2026-12-31");
+    gantt.setup_dates();
+    gantt.render();
+    hebrewizeMonths();
+  }
+
+  document.addEventListener("DOMContentLoaded", render);
+</script>
+</body>
+</html>
+```
+
+כל מה שצריך זה להעלות את הקובץ ולערוך את המשימות לפי הצורך[1].
+
+Citations:
+[1] bootstrap CDN files https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/
